@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "静流",
+    "slug": "jingliu",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    },
+    "android": {
+      "package": "com.jingliu.app"
+    },
+    "plugins": [
+      "expo-notifications",
+      "expo-status-bar"
+    ]
+  }
+}

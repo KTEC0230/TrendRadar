@@ -5,17 +5,18 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "extra": {
-      "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
-      }
-    },
     "android": {
       "package": "com.jingliu.app"
     },
     "plugins": [
       "expo-notifications",
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "34fcc262-8eb9-433e-ae09-2fa7a78935d5"
+      }
+    },
+    "owner": "ktec"
   }
 }

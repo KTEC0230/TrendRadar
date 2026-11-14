@@ -1391,6 +1391,14 @@ class NewsAnalyzer:
         except Exception as e:
             print(f"[静流] URL 监控调度失败: {e}")
 
+        # 摘要池定时推送（低置信度契约攒批，jingliu.digest.enabled 时生效）
+        try:
+            from trendradar.jingliu.digest import DigestScheduler
+
+            DigestScheduler(self.ctx).run_if_due()
+        except Exception as e:
+            print(f"[静流] 摘要推送失败: {e}")
+
     def _collect_douyin_rss_feeds(self) -> List:
         """获取抖音适配器生成的 RSS 源配置（jingliu.enabled 且配置 rsshub_base 时）"""
         try:

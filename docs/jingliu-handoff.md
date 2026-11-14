@@ -19,9 +19,9 @@
 | App HTTP API | ✅ 完成 | 13 个端点，冒烟 13/13 |
 | AI 理由字段（LLM reason） | ✅ 完成 | prompt 已带可选字段，未用真实 LLM 跑过 |
 | 移动端 App（iOS/Android） | ❌ 未做 | API 层已就绪，App 是下一步 |
-| 摘要池推送（low 置信度定时摘要） | ⏸ 预留 | 查询接口有，推送时机未实现 |
+| 摘要池定时推送（Digest） | ✅ 完成 | low 置信度契约攒批，按 interval_minutes 汇总一条推送 |
 
-**测试基线**：`uv run pytest tests/` → 75 passed + 35 subtests（新增 4 个测试文件 45 例）。
+**测试基线**：`uv run pytest tests/` → 82 passed + 35 subtests（新增 5 个测试文件 52 例）。
 **端到端冒烟**：`D:\K\zcode\tmp-jingliu-smoke\smoke.py`（推送链路 10/10）、`api_smoke.py`（API 13/13）。
 
 ---
@@ -52,7 +52,7 @@ trendradar/storage/jingliu_schema.sql   # 6 张表 DDL（sources/push_contracts/
 
 | 文件 | 改动性质 | 同步上游时 |
 |------|---------|-----------|
-| `trendradar/__main__.py` | 4 处小插入：`_has_notification_configured` 认可静流渠道、`_crawl_rss_data` 合并抖音源、`run()` 挂监控周期、`_send_notification_if_needed` 挂契约分发 | ⚠️ 高危冲突区，重合并时逐段核对 |
+| `trendradar/__main__.py` | 5 处小插入：`_has_notification_configured` 认可静流渠道、`_crawl_rss_data` 合并抖音源、`run()` 挂监控周期、`_send_notification_if_needed` 挂契约分发、`_run_jingliu_monitor_cycle` 尾部挂摘要推送 | ⚠️ 高危冲突区，重合并时逐段核对 |
 | `trendradar/context.py` | `jingliu_enabled` 属性 + 3 个工厂 + `_get_jingliu_devices` | ⚠️ 同上 |
 | `trendradar/core/loader.py` | `_load_jingliu_config` + load_config 一行 | 低 |
 | `trendradar/core/config.py` | 未改 | — |
@@ -121,6 +121,7 @@ uv run python D:\K\zcode\tmp-jingliu-smoke\api_smoke.py    # API 冒烟
 | `apns.*` | — | team_id/key_id/key_file/bundle_id/production/device_tokens |
 | `fcm.*` | — | project_id/credentials_file/device_tokens |
 | `api.host/port/auth_token` | 127.0.0.1/8807/"" | API 服务；**auth_token 为空则拒绝启动** |
+| `digest.enabled/interval_minutes/max_items/min_confidence` | false/240/10/low | 摘要池定时推送：到期把 pending 契约聚合为一条，送达后标记 channel=digest |
 
 ### 4.2 环境变量（优先于 config，CI/容器友好）
 
@@ -203,6 +204,6 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 1. **APNs/FCM 凭据配置 + 真机首推验证**（阻塞 App 开发的唯一后端事项）
 2. **iOS MVP**（SwiftUI：token 注册 → 通知展示 → 反馈 → 推送流列表；API 已备齐）
 3. **Android**（Kotlin + FCM 同构）
-4. **摘要池推送**：low 置信度契约定时汇总一条推送（查询接口 `get_pending_contracts` 已有）
+4. ~~摘要池推送~~（已完成：`jingliu/digest.py`，`digest.enabled` 开启）
 5. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述
 6. **上游同步**：见 2.2 冲突点清单

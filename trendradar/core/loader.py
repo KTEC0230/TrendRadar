@@ -219,6 +219,7 @@ def _load_jingliu_config(config_data: Dict) -> Dict:
     apns = jingliu.get("apns", {})
     fcm = jingliu.get("fcm", {})
     api = jingliu.get("api", {})
+    digest = jingliu.get("digest", {})
 
     enabled_env = _get_env_bool("JINGLIU_ENABLED")
 
@@ -258,6 +259,12 @@ def _load_jingliu_config(config_data: Dict) -> Dict:
             "HOST": _get_env_str("JINGLIU_API_HOST") or api.get("host", "127.0.0.1"),
             "PORT": api_port_env if api_port_env is not None else api_port,
             "AUTH_TOKEN": _get_env_str("JINGLIU_API_TOKEN") or api.get("auth_token", ""),
+        },
+        "DIGEST": {
+            "ENABLED": digest.get("enabled", False),
+            "INTERVAL_MINUTES": _int(digest.get("interval_minutes", 240), 240),
+            "MAX_ITEMS": _int(digest.get("max_items", 10), 10),
+            "MIN_CONFIDENCE": digest.get("min_confidence", "low"),
         },
     }
 

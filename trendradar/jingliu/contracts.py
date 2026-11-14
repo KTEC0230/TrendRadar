@@ -38,7 +38,7 @@ def make_fingerprint(*parts: str) -> str:
 class HitReason:
     """命中理由。text 直接进通知，detail 为结构化附言。"""
 
-    kind: Literal["keyword", "ai", "webpage_change"]
+    kind: Literal["keyword", "ai", "webpage_change", "digest"]
     text: str
     detail: Dict[str, Any] = field(default_factory=dict)
 

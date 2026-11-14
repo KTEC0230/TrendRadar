@@ -538,3 +538,9 @@ jingliu:
     host: "127.0.0.1"                 # 默认仅本机；对外暴露请用反向代理 + HTTPS
     port: 8807
     auth_token: ""                    # Bearer Token（必填，或环境变量 JINGLIU_API_TOKEN）；留空则 API 拒绝启动
+
+  digest:                             # 摘要池定时推送（低置信度契约攒批汇总为一条）
+    enabled: false
+    interval_minutes: 240             # 摘要间隔（分钟）；每轮 trendradar 运行时判定是否到期
+    max_items: 10                     # 单条摘要最多聚合的契约数
+    min_confidence: low               # 摘要池纳入的最低置信度（low=只收 low；medium=收 low+medium）

@@ -86,14 +86,20 @@ class LocalStorageBackend(SQLiteStorageMixin, StorageBackend):
         新结构（扁平）：output/{type}/{date}.db
         - output/news/2025-12-28.db
         - output/rss/2025-12-28.db
+        - output/state/state.db（静流推送台账，跨日持久，不参与日期清理）
 
         Args:
             date: 日期字符串
-            db_type: 数据库类型 ("news" 或 "rss")
+            db_type: 数据库类型 ("news" / "rss" / "state")
 
         Returns:
             数据库文件路径
         """
+        if db_type == "state":
+            # state 库不带日期，跨运行周期持久化
+            db_dir = self.data_dir / "state"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            return db_dir / "state.db"
         date_str = self._format_date_folder(date)
         db_dir = self.data_dir / db_type
         db_dir.mkdir(parents=True, exist_ok=True)
@@ -281,6 +287,67 @@ class LocalStorageBackend(SQLiteStorageMixin, StorageBackend):
 
     def get_all_rss_ids(self, date=None):
         return self._get_all_rss_ids_impl(date)
+
+    # ========================================
+    # 静流：源注册与推送契约（state 库）
+    # ========================================
+
+    def register_source(self, source):
+        return self._register_source_impl(source)
+
+    def list_sources(self, source_type=None, status="active"):
+        return self._list_sources_impl(source_type, status)
+
+    def get_source(self, source_id):
+        return self._get_source_impl(source_id)
+
+    def update_source_check(self, source_id, checked_at_iso, message=""):
+        return self._update_source_check_impl(source_id, checked_at_iso, message)
+
+    def set_source_status(self, source_id, status):
+        return self._set_source_status_impl(source_id, status)
+
+    def is_fingerprint_pushed(self, fingerprint):
+        return self._is_fingerprint_pushed_impl(fingerprint)
+
+    def save_push_contract(self, contract):
+        return self._save_push_contract_impl(contract)
+
+    def mark_contract_pushed(self, contract_id, channel, pushed_at_iso):
+        return self._mark_contract_pushed_impl(contract_id, channel, pushed_at_iso)
+
+    def get_pending_contracts(self, min_confidence="medium", limit=100):
+        return self._get_pending_contracts_impl(min_confidence, limit)
+
+    def get_recent_contracts(self, limit=50):
+        return self._get_recent_contracts_impl(limit)
+
+    def get_last_contract_pushed_at(self, interest_id):
+        return self._get_last_contract_pushed_at_impl(interest_id)
+
+    def update_source(self, source_id, updates):
+        return self._update_source_impl(source_id, updates)
+
+    def delete_source(self, source_id):
+        return self._delete_source_impl(source_id)
+
+    def set_contract_feedback(self, contract_id, feedback):
+        return self._set_contract_feedback_impl(contract_id, feedback)
+
+    def register_device(self, channel, device_token, device_name=""):
+        return self._register_device_impl(channel, device_token, device_name)
+
+    def list_devices(self, channel=None):
+        return self._list_devices_impl(channel)
+
+    def delete_device(self, channel, device_token):
+        return self._delete_device_impl(channel, device_token)
+
+    def save_webpage_diff(self, diff):
+        return self._save_webpage_diff_impl(diff)
+
+    def get_latest_webpage_diff(self, source_id):
+        return self._get_latest_webpage_diff_impl(source_id)
 
     # ========================================
     # 本地特有功能：TXT/HTML 快照

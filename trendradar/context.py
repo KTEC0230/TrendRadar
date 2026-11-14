@@ -76,6 +76,8 @@ class AppContext:
         self.config = config
         self._storage_manager = None
         self._scheduler = None
+        self._push_contract_builder = None
+        self._monitor_scheduler = None
 
     # === 配置访问 ===
 
@@ -476,7 +478,22 @@ class AppContext:
             get_time_func=self.get_time,
             split_content_func=self.split_content,
             translator=translator,
+            jingliu_device_provider=self._get_jingliu_devices,
         )
+
+    def _get_jingliu_devices(self) -> Dict[str, List[str]]:
+        """静流动态设备 token（App 通过 API 注册，存 state 库 devices 表）"""
+        if not self.jingliu_enabled:
+            return {}
+        try:
+            storage = self.get_storage_manager()
+            return {
+                "apns": [d["device_token"] for d in storage.list_devices("apns")],
+                "fcm": [d["device_token"] for d in storage.list_devices("fcm")],
+            }
+        except Exception as e:
+            print(f"[静流] 读取注册设备失败: {e}")
+            return {}
 
     def create_scheduler(self) -> Scheduler:
         """
@@ -496,6 +513,33 @@ class AppContext:
                 fallback_report_mode=self.config.get("REPORT_MODE", "current"),
             )
         return self._scheduler
+
+    # === 静流（推送即契约） ===
+
+    @property
+    def jingliu_enabled(self) -> bool:
+        """静流功能是否启用（config.yaml 的 jingliu.enabled）"""
+        return self.config.get("JINGLIU", {}).get("ENABLED", False)
+
+    def get_push_contract_builder(self):
+        """获取推送契约构建器（延迟初始化，单例；仅 jingliu.enabled 时使用）"""
+        if self._push_contract_builder is None:
+            from trendradar.jingliu.contracts import PushContractBuilder
+
+            self._push_contract_builder = PushContractBuilder(
+                config=self.config,
+                state_store=self.get_storage_manager(),
+                get_time_func=self.get_time,
+            )
+        return self._push_contract_builder
+
+    def get_monitor_scheduler(self):
+        """获取 URL 监控调度器（延迟初始化，单例；仅 jingliu.enabled 时使用）"""
+        if self._monitor_scheduler is None:
+            from trendradar.jingliu.monitor_scheduler import MonitorScheduler
+
+            self._monitor_scheduler = MonitorScheduler(ctx=self)
+        return self._monitor_scheduler
 
     # === AI 智能筛选 ===
 

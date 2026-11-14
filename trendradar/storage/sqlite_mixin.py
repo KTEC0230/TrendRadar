@@ -5,6 +5,7 @@ SQLite 存储 Mixin
 提供共用的 SQLite 数据库操作逻辑，供 LocalStorageBackend 和 RemoteStorageBackend 复用。
 """
 
+import json
 import sqlite3
 from abc import abstractmethod
 from datetime import datetime
@@ -66,6 +67,8 @@ class SQLiteStorageMixin:
         """
         if db_type == "rss":
             return Path(__file__).parent / "rss_schema.sql"
+        if db_type == "state":
+            return Path(__file__).parent / "jingliu_schema.sql"
         return Path(__file__).parent / "schema.sql"
 
     def _get_ai_filter_schema_path(self) -> Path:
@@ -95,11 +98,19 @@ class SQLiteStorageMixin:
             if ai_filter_schema.exists():
                 with open(ai_filter_schema, "r", encoding="utf-8") as f:
                     conn.executescript(f.read())
+            self._migrate_ai_filter_schema(conn)
 
         if db_type == "rss":
             self._migrate_rss_schema(conn)
 
         conn.commit()
+
+    def _migrate_ai_filter_schema(self, conn: sqlite3.Connection) -> None:
+        """迁移 ai_filter_results 表结构（为已有数据库添加 reason 列，静流 hit_reason 使用）"""
+        cursor = conn.execute("PRAGMA table_info(ai_filter_results)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "reason" not in columns:
+            conn.execute("ALTER TABLE ai_filter_results ADD COLUMN reason TEXT DEFAULT ''")
 
     def _migrate_rss_schema(self, conn: sqlite3.Connection) -> None:
         """迁移 rss_items 表结构（为已有数据库添加 guid 列）"""
@@ -1559,13 +1570,14 @@ class SQLiteStorageMixin:
                 try:
                     cursor.execute("""
                         INSERT INTO ai_filter_results
-                        (news_item_id, source_type, tag_id, relevance_score, created_at)
-                        VALUES (?, ?, ?, ?, ?)
+                        (news_item_id, source_type, tag_id, relevance_score, reason, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
                     """, (
                         r["news_item_id"],
                         r.get("source_type", "hotlist"),
                         r["tag_id"],
                         r.get("relevance_score", 0.0),
+                        r.get("reason", ""),
                         now_str,
                     ))
                     count += 1
@@ -1591,7 +1603,7 @@ class SQLiteStorageMixin:
                     t.tag, t.description as tag_description, t.priority,
                     n.title, n.platform_id as source_id, p.name as source_name,
                     n.url, n.mobile_url, n.rank,
-                    n.first_crawl_time, n.last_crawl_time, n.crawl_count
+                    n.first_crawl_time, n.last_crawl_time, n.crawl_count, r.reason
                 FROM ai_filter_results r
                 JOIN ai_filter_tags t ON r.tag_id = t.id
                 JOIN news_items n ON r.news_item_id = n.id
@@ -1614,6 +1626,7 @@ class SQLiteStorageMixin:
                     "rank": row[12],
                     "first_time": row[13], "last_time": row[14],
                     "count": row[15],
+                    "reason": row[16] or "",
                 })
                 hotlist_news_ids.append(row[0])
 
@@ -1662,7 +1675,7 @@ class SQLiteStorageMixin:
                 # 从 news 库获取 rss 类型的分类结果 ID
                 cursor.execute("""
                     SELECT r.news_item_id, r.tag_id, r.relevance_score,
-                           t.tag, t.description, t.priority
+                           t.tag, t.description, t.priority, r.reason
                     FROM ai_filter_results r
                     JOIN ai_filter_tags t ON r.tag_id = t.id
                     WHERE r.status = 'active' AND r.source_type = 'rss'
@@ -1696,6 +1709,7 @@ class SQLiteStorageMixin:
                                 "tag": fr_row[3],
                                 "tag_description": fr_row[4],
                                 "tag_priority": fr_row[5],
+                                "reason": fr_row[6] or "",
                                 "title": info[1],
                                 "source_id": info[2],
                                 "source_name": info[3] or info[2],
@@ -1763,3 +1777,425 @@ class SQLiteStorageMixin:
         except Exception as e:
             print(f"[AI筛选] 获取 RSS 列表失败: {e}")
             return []
+
+    # ========================================
+    # 静流：源注册与推送契约（state 库，db_type="state"）
+    # ========================================
+
+    def _register_source_impl(self, source: Dict) -> int:
+        """注册/更新一个源。external_id 相同且 type 相同时视为同一源，更新配置。"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            now_str = self._get_configured_time().isoformat(timespec="seconds")
+
+            cursor.execute("""
+                SELECT id FROM sources WHERE type = ? AND external_id = ?
+            """, (source.get("type", ""), source.get("external_id", "")))
+            row = cursor.fetchone()
+
+            if row:
+                cursor.execute("""
+                    UPDATE sources SET
+                        platform = ?, name = ?, config = ?,
+                        check_interval = ?, selector_config = ?, status = ?
+                    WHERE id = ?
+                """, (
+                    source.get("platform", ""),
+                    source.get("name", ""),
+                    json.dumps(source.get("config", {}), ensure_ascii=False),
+                    int(source.get("check_interval", 30)),
+                    json.dumps(source.get("selector_config", {}), ensure_ascii=False),
+                    source.get("status", "active"),
+                    row[0],
+                ))
+                conn.commit()
+                return row[0]
+
+            cursor.execute("""
+                INSERT INTO sources
+                    (type, platform, external_id, name, config, check_interval,
+                     selector_config, status, last_checked_at, last_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '', ?)
+            """, (
+                source.get("type", ""),
+                source.get("platform", ""),
+                source.get("external_id", ""),
+                source.get("name", ""),
+                json.dumps(source.get("config", {}), ensure_ascii=False),
+                int(source.get("check_interval", 30)),
+                json.dumps(source.get("selector_config", {}), ensure_ascii=False),
+                source.get("status", "active"),
+                now_str,
+            ))
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[静流] 注册源失败: {e}")
+            return 0
+
+    def _list_sources_impl(self, source_type: Optional[str] = None, status: Optional[str] = "active") -> List[Dict]:
+        """列出源，返回原始行（config/selector_config 反序列化为 dict）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+
+            sql = "SELECT * FROM sources"
+            conditions, params = [], []
+            if source_type:
+                conditions.append("type = ?")
+                params.append(source_type)
+            if status:
+                conditions.append("status = ?")
+                params.append(status)
+            if conditions:
+                sql += " WHERE " + " AND ".join(conditions)
+            sql += " ORDER BY id"
+
+            cursor.execute(sql, params)
+            return [self._source_row_to_dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"[静流] 读取源列表失败: {e}")
+            return []
+
+    def _get_source_impl(self, source_id: int) -> Optional[Dict]:
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM sources WHERE id = ?", (source_id,))
+            row = cursor.fetchone()
+            return self._source_row_to_dict(row) if row else None
+        except Exception as e:
+            print(f"[静流] 读取源失败: {e}")
+            return None
+
+    @staticmethod
+    def _source_row_to_dict(row) -> Dict:
+        """将 sources 行转换为 dict（JSON 列反序列化）"""
+        record = dict(row)
+        try:
+            record["config"] = json.loads(record.get("config") or "{}")
+        except (ValueError, TypeError):
+            record["config"] = {}
+        try:
+            record["selector_config"] = json.loads(record.get("selector_config") or "{}")
+        except (ValueError, TypeError):
+            record["selector_config"] = {}
+        return record
+
+    def _update_source_check_impl(self, source_id: int, checked_at_iso: str, message: str = "") -> bool:
+        """更新源的最后检查时间与结果说明（无论成败都更新，避免失败源被热循环）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            conn.execute(
+                "UPDATE sources SET last_checked_at = ?, last_message = ? WHERE id = ?",
+                (checked_at_iso, message, source_id),
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[静流] 更新源检查时间失败: {e}")
+            return False
+
+    _SOURCE_UPDATABLE_FIELDS = {"name", "check_interval", "config", "selector_config", "status", "platform"}
+    _SOURCE_JSON_FIELDS = {"config", "selector_config"}
+
+    def _update_source_impl(self, source_id: int, updates: Dict) -> bool:
+        """部分更新源字段（仅白名单字段；JSON 字段自动序列化）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+
+            set_parts, params = [], []
+            for field, value in (updates or {}).items():
+                if field not in self._SOURCE_UPDATABLE_FIELDS:
+                    continue
+                if field in self._SOURCE_JSON_FIELDS:
+                    set_parts.append(f"{field} = ?")
+                    params.append(json.dumps(value or {}, ensure_ascii=False))
+                else:
+                    set_parts.append(f"{field} = ?")
+                    params.append(value)
+
+            if not set_parts:
+                return False
+
+            params.append(source_id)
+            cursor.execute(f"UPDATE sources SET {', '.join(set_parts)} WHERE id = ?", params)
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"[静流] 更新源失败: {e}")
+            return False
+
+    def _delete_source_impl(self, source_id: int) -> bool:
+        """删除源及其关联的网页变更记录"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM webpage_diffs WHERE source_id = ?", (source_id,))
+            cursor.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"[静流] 删除源失败: {e}")
+            return False
+
+    def _set_source_status_impl(self, source_id: int, status: str) -> bool:
+        try:
+            conn = self._get_connection(db_type="state")
+            conn.execute("UPDATE sources SET status = ? WHERE id = ?", (status, source_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[静流] 更新源状态失败: {e}")
+            return False
+
+    def _is_fingerprint_pushed_impl(self, fingerprint: str) -> bool:
+        """指纹是否已实际推送过（pushed_at 非空才算，未推送的低置信度记录不占用指纹）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM push_contracts WHERE content_fingerprint = ? AND pushed_at IS NOT NULL LIMIT 1",
+                (fingerprint,),
+            )
+            return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"[静流] 查询推送指纹失败: {e}")
+            return False  # 查询失败按未推送处理，宁可重试不可漏推
+
+    def _save_push_contract_impl(self, contract: Dict) -> int:
+        """保存推送契约（pushed_at 为空表示待推送/低置信度入池）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            now_str = self._get_configured_time().isoformat(timespec="seconds")
+            cursor.execute("""
+                INSERT INTO push_contracts
+                    (content_fingerprint, interest_id, hit_reason, confidence,
+                     source_attribution, payload, pushed_at, channel, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                contract.get("content_fingerprint", ""),
+                contract.get("interest_id", ""),
+                json.dumps(contract.get("hit_reason", {}), ensure_ascii=False),
+                contract.get("confidence", "low"),
+                json.dumps(contract.get("source_attribution", {}), ensure_ascii=False),
+                json.dumps(contract.get("payload", {}), ensure_ascii=False),
+                contract.get("pushed_at"),
+                contract.get("channel", ""),
+                now_str,
+            ))
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[静流] 保存推送契约失败: {e}")
+            return 0
+
+    def _mark_contract_pushed_impl(self, contract_id: int, channel: str, pushed_at_iso: str) -> bool:
+        """标记契约已推送。指纹唯一性由部分唯一索引保证，冲突时返回 False。"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "UPDATE push_contracts SET pushed_at = ?, channel = ? WHERE id = ? AND pushed_at IS NULL",
+                    (pushed_at_iso, channel, contract_id),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError:
+                return False  # 同指纹已被并发标记推送，静默跳过
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"[静流] 标记契约推送失败: {e}")
+            return False
+
+    def _set_contract_feedback_impl(self, contract_id: int, feedback: str) -> bool:
+        """写入契约的用户反馈（useful / useless，空串清除）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE push_contracts SET user_feedback = ? WHERE id = ?",
+                (feedback, contract_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"[静流] 写入契约反馈失败: {e}")
+            return False
+
+    def _get_pending_contracts_impl(self, min_confidence: str = "medium", limit: int = 100) -> List[Dict]:
+        """获取未推送的契约（预留：低置信度摘要池）"""
+        confidence_order = {"high": 3, "medium": 2, "low": 1}
+        threshold = confidence_order.get(min_confidence, 2)
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM push_contracts WHERE pushed_at IS NULL ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+            results = []
+            for row in cursor.fetchall():
+                record = dict(row)
+                if confidence_order.get(record.get("confidence", "low"), 1) < threshold:
+                    continue
+                for field in ("hit_reason", "source_attribution", "payload"):
+                    try:
+                        record[field] = json.loads(record.get(field) or "{}")
+                    except (ValueError, TypeError):
+                        record[field] = {}
+                results.append(record)
+            return results
+        except Exception as e:
+            print(f"[静流] 读取待推送契约失败: {e}")
+            return []
+
+    def _get_last_contract_pushed_at_impl(self, interest_id: str) -> Optional[str]:
+        """该 interest 的最近一次已推送时间（冷却期判定用）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT pushed_at FROM push_contracts
+                WHERE interest_id = ? AND pushed_at IS NOT NULL
+                ORDER BY pushed_at DESC LIMIT 1
+            """, (interest_id,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            print(f"[静流] 查询最近推送时间失败: {e}")
+            return None
+
+    def _get_recent_contracts_impl(self, limit: int = 50) -> List[Dict]:
+        """已推送契约倒序（App 推送流）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM push_contracts
+                WHERE pushed_at IS NOT NULL
+                ORDER BY pushed_at DESC LIMIT ?
+            """, (limit,))
+            results = []
+            for row in cursor.fetchall():
+                record = dict(row)
+                for field in ("hit_reason", "source_attribution", "payload"):
+                    try:
+                        record[field] = json.loads(record.get(field) or "{}")
+                    except (ValueError, TypeError):
+                        record[field] = {}
+                results.append(record)
+            return results
+        except Exception as e:
+            print(f"[静流] 读取推送流失败: {e}")
+            return []
+
+    def _save_webpage_diff_impl(self, diff: Dict) -> int:
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            now_str = self._get_configured_time().isoformat(timespec="seconds")
+            cursor.execute("""
+                INSERT INTO webpage_diffs
+                    (source_id, previous_fingerprint, current_fingerprint, diff_summary, detected_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                diff.get("source_id", 0),
+                diff.get("previous_fingerprint", ""),
+                diff.get("current_fingerprint", ""),
+                json.dumps(diff.get("diff_summary", {}), ensure_ascii=False),
+                now_str,
+            ))
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[静流] 保存网页变更记录失败: {e}")
+            return 0
+
+    def _get_latest_webpage_diff_impl(self, source_id: int) -> Optional[Dict]:
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM webpage_diffs WHERE source_id = ?
+                ORDER BY detected_at DESC, id DESC LIMIT 1
+            """, (source_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            record = dict(row)
+            try:
+                record["diff_summary"] = json.loads(record.get("diff_summary") or "{}")
+            except (ValueError, TypeError):
+                record["diff_summary"] = {}
+            return record
+        except Exception as e:
+            print(f"[静流] 读取网页变更记录失败: {e}")
+            return None
+
+    # ========================================
+    # 静流：设备注册（App 动态 token，与 config 静态 token 合并生效）
+    # ========================================
+
+    def _register_device_impl(self, channel: str, device_token: str, device_name: str = "") -> int:
+        """注册/刷新设备（同 channel+token 视为同一设备，更新 last_seen_at）"""
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            now_str = self._get_configured_time().isoformat(timespec="seconds")
+
+            cursor.execute(
+                "SELECT id FROM devices WHERE channel = ? AND device_token = ?",
+                (channel, device_token),
+            )
+            row = cursor.fetchone()
+            if row:
+                cursor.execute(
+                    "UPDATE devices SET last_seen_at = ?, device_name = ? WHERE id = ?",
+                    (now_str, device_name, row[0]),
+                )
+                conn.commit()
+                return row[0]
+
+            cursor.execute("""
+                INSERT INTO devices (channel, device_token, device_name, registered_at, last_seen_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (channel, device_token, device_name, now_str, now_str))
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[静流] 注册设备失败: {e}")
+            return 0
+
+    def _list_devices_impl(self, channel: Optional[str] = None) -> List[Dict]:
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            if channel:
+                cursor.execute(
+                    "SELECT * FROM devices WHERE channel = ? ORDER BY id",
+                    (channel,),
+                )
+            else:
+                cursor.execute("SELECT * FROM devices ORDER BY id")
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"[静流] 读取设备列表失败: {e}")
+            return []
+
+    def _delete_device_impl(self, channel: str, device_token: str) -> bool:
+        try:
+            conn = self._get_connection(db_type="state")
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM devices WHERE channel = ? AND device_token = ?",
+                (channel, device_token),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"[静流] 删除设备失败: {e}")
+            return False

@@ -446,6 +446,7 @@ class AIFilterPipeline:
                 "last_time": r.get("last_time", ""),
                 "count": r.get("count", 1),
                 "relevance_score": r.get("relevance_score", 0),
+                "reason": r.get("reason", ""),
                 "source_type": r.get("source_type", "hotlist"),
             })
             tag_groups[tag_name]["count"] += 1
@@ -568,6 +569,9 @@ class AIFilterPipeline:
                     "is_new": is_new,
                     "time_display": time_display,
                     "matched_keyword": tag_name,
+                    # 静流契约层依赖：AI 相关度与 LLM 简短理由
+                    "relevance_score": item.get("relevance_score", 0),
+                    "reason": item.get("reason", ""),
                 }
 
                 if source_type == "rss":

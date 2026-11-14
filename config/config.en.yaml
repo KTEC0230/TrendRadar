@@ -498,3 +498,41 @@ advanced:
     slack: 4000
   batch_send_interval: 3              # Batch send interval (seconds)
   feishu_message_separator: "━━━━━━━━━━━━━━━━"
+
+
+# ===============================================================
+# JingLiu ("Still Stream") - Push-as-a-Contract
+#
+# Every mobile push carries its own hit reason; pushed once per
+# content fingerprint, ledger persisted in output/state/state.db.
+# Webpage sources are managed via the state DB (or the App API);
+# Douyin sources require an external RSSHub instance (rsshub_base).
+# ===============================================================
+jingliu:
+  enabled: false                      # master switch (all JingLiu logic skipped when false)
+  rsshub_base: ""                     # RSSHub instance URL, required for Douyin sources
+
+  webpage:                            # URL monitoring
+    min_change_chars: 50              # min effective changed chars to trigger a push
+    cooldown_minutes: 15              # suppress repeat pushes for the same source within N minutes
+    request_timeout: 15               # fetch timeout (seconds)
+
+  apns:                               # iOS direct push (requires .p8 key; prefer env vars)
+    enabled: false
+    team_id: ""
+    key_id: ""
+    key_file: ""
+    bundle_id: ""
+    production: true
+    device_tokens: ""                 # ; separated (registered devices from the App merge in automatically)
+
+  fcm:                                # Android direct push (requires service account JSON)
+    enabled: false
+    project_id: ""
+    credentials_file: ""
+    device_tokens: ""
+
+  api:                                # App HTTP API (python -m trendradar.jingliu.api_server)
+    host: "127.0.0.1"
+    port: 8807
+    auth_token: ""                    # Bearer token (required, or env JINGLIU_API_TOKEN); empty = refuse to start

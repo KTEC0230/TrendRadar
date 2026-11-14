@@ -499,3 +499,42 @@ advanced:
     slack: 4000
   batch_send_interval: 3              # 批次发送间隔（秒）
   feishu_message_separator: "━━━━━━━━━━━━━━━━"
+
+
+# ===============================================================
+# 静流（JingLiu）—— 推送即契约
+#
+# 每条移动端推送自带命中理由（hit_reason），独立于报告式渠道。
+# 推送台账持久化在 output/state/state.db，同一内容只推一次。
+#
+# 网页监控源管理（暂无界面，通过 state 库或脚本注册 sources 表），
+# 抖音源依赖外部 RSSHub 实例（rsshub_base 必填）。
+# ===============================================================
+jingliu:
+  enabled: false                      # 总开关（false 时所有静流逻辑不生效）
+  rsshub_base: ""                     # RSSHub 实例地址（如 https://rsshub.example.com），抖音源必填
+
+  webpage:                            # URL 监控参数
+    min_change_chars: 50              # 变更幅度阈值：正文有效变化字符数低于此值不推送
+    cooldown_minutes: 15              # 冷却期：同一源 N 分钟内多次变更只推最新一条
+    request_timeout: 15               # 抓取超时（秒）
+
+  apns:                               # iOS 直连推送（需 .p8 密钥，推荐用环境变量传密钥）
+    enabled: false
+    team_id: ""                       # Apple 开发者团队 ID（10 位）
+    key_id: ""                        # .p8 密钥 ID
+    key_file: ""                      # .p8 文件路径（或环境变量 APNS_KEY_FILE）
+    bundle_id: ""                     # 应用 Bundle ID（apns-topic）
+    production: true                  # false = 沙箱环境
+    device_tokens: ""                 # 设备 token，多个用 ; 分隔（上限 max_accounts_per_channel）
+
+  fcm:                                # Android 直连推送（需 service account JSON）
+    enabled: false
+    project_id: ""                    # Firebase 项目 ID
+    credentials_file: ""              # service account JSON 路径（或环境变量 GOOGLE_APPLICATION_CREDENTIALS）
+    device_tokens: ""                 # 设备 token，多个用 ; 分隔（App 动态注册的 token 存 state 库，自动合并）
+
+  api:                                # App HTTP API（python -m trendradar.jingliu.api_server 启动）
+    host: "127.0.0.1"                 # 默认仅本机；对外暴露请用反向代理 + HTTPS
+    port: 8807
+    auth_token: ""                    # Bearer Token（必填，或环境变量 JINGLIU_API_TOKEN）；留空则 API 拒绝启动

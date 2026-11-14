@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS ai_filter_results (
     source_type TEXT NOT NULL DEFAULT 'hotlist',  -- hotlist / rss
     tag_id INTEGER NOT NULL,             -- 引用 ai_filter_tags.id
     relevance_score REAL DEFAULT 0,      -- 相关度 0.0 ~ 1.0
+    reason TEXT DEFAULT '',              -- LLM 给出的简短命中理由（静流 hit_reason 使用）
     status TEXT DEFAULT 'active',        -- active / deprecated
     deprecated_at TEXT,
     created_at TEXT NOT NULL,

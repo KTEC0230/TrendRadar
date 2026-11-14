@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# TrendRadar 运行产物
+output/
+
+# 环境与工具
+.env
+.pytest_cache/

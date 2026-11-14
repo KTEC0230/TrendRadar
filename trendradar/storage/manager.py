@@ -367,6 +367,84 @@ class StorageManager:
         """获取所有 RSS ID 和标题"""
         return self.get_backend().get_all_rss_ids(date)
 
+    # === 静流：源注册与推送契约（state 库） ===
+
+    def register_source(self, source):
+        """注册/更新一个源"""
+        return self.get_backend().register_source(source)
+
+    def list_sources(self, source_type=None, status="active"):
+        """列出源"""
+        return self.get_backend().list_sources(source_type, status)
+
+    def get_source(self, source_id):
+        """读取单个源"""
+        return self.get_backend().get_source(source_id)
+
+    def update_source_check(self, source_id, checked_at_iso, message=""):
+        """更新源的最后检查时间"""
+        return self.get_backend().update_source_check(source_id, checked_at_iso, message)
+
+    def set_source_status(self, source_id, status):
+        """更新源状态"""
+        return self.get_backend().set_source_status(source_id, status)
+
+    def is_fingerprint_pushed(self, fingerprint):
+        """指纹是否已推送过"""
+        return self.get_backend().is_fingerprint_pushed(fingerprint)
+
+    def save_push_contract(self, contract):
+        """保存推送契约"""
+        return self.get_backend().save_push_contract(contract)
+
+    def mark_contract_pushed(self, contract_id, channel, pushed_at_iso):
+        """标记契约已推送"""
+        return self.get_backend().mark_contract_pushed(contract_id, channel, pushed_at_iso)
+
+    def get_pending_contracts(self, min_confidence="medium", limit=100):
+        """获取未推送契约（摘要池预留）"""
+        return self.get_backend().get_pending_contracts(min_confidence, limit)
+
+    def get_recent_contracts(self, limit=50):
+        """已推送契约倒序（App 推送流）"""
+        return self.get_backend().get_recent_contracts(limit)
+
+    def get_last_contract_pushed_at(self, interest_id):
+        """该 interest 的最近一次已推送时间（冷却期判定用）"""
+        return self.get_backend().get_last_contract_pushed_at(interest_id)
+
+    def update_source(self, source_id, updates):
+        """部分更新源字段"""
+        return self.get_backend().update_source(source_id, updates)
+
+    def delete_source(self, source_id):
+        """删除源及其关联变更记录"""
+        return self.get_backend().delete_source(source_id)
+
+    def set_contract_feedback(self, contract_id, feedback):
+        """写入契约的用户反馈"""
+        return self.get_backend().set_contract_feedback(contract_id, feedback)
+
+    def register_device(self, channel, device_token, device_name=""):
+        """注册/刷新推送设备"""
+        return self.get_backend().register_device(channel, device_token, device_name)
+
+    def list_devices(self, channel=None):
+        """列出注册设备"""
+        return self.get_backend().list_devices(channel)
+
+    def delete_device(self, channel, device_token):
+        """删除注册设备"""
+        return self.get_backend().delete_device(channel, device_token)
+
+    def save_webpage_diff(self, diff):
+        """保存网页变更记录"""
+        return self.get_backend().save_webpage_diff(diff)
+
+    def get_latest_webpage_diff(self, source_id):
+        """读取源的最新网页变更记录"""
+        return self.get_backend().get_latest_webpage_diff(source_id)
+
 
 
 def get_storage_manager(

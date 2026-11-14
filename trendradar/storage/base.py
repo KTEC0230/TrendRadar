@@ -526,6 +526,65 @@ class StorageBackend(ABC):
     def get_all_rss_ids(self, date: Optional[str] = None) -> List[Dict]:
         return []
 
+    # === 静流：源注册与推送契约（state 库，默认空实现） ===
+
+    def register_source(self, source: Dict) -> int:
+        return 0
+
+    def list_sources(self, source_type: Optional[str] = None, status: Optional[str] = "active") -> List[Dict]:
+        return []
+
+    def get_source(self, source_id: int) -> Optional[Dict]:
+        return None
+
+    def update_source_check(self, source_id: int, checked_at_iso: str, message: str = "") -> bool:
+        return False
+
+    def set_source_status(self, source_id: int, status: str) -> bool:
+        return False
+
+    def is_fingerprint_pushed(self, fingerprint: str) -> bool:
+        return False
+
+    def save_push_contract(self, contract: Dict) -> int:
+        return 0
+
+    def mark_contract_pushed(self, contract_id: int, channel: str, pushed_at_iso: str) -> bool:
+        return False
+
+    def get_pending_contracts(self, min_confidence: str = "medium", limit: int = 100) -> List[Dict]:
+        return []
+
+    def get_recent_contracts(self, limit: int = 50) -> List[Dict]:
+        return []
+
+    def get_last_contract_pushed_at(self, interest_id: str) -> Optional[str]:
+        return None
+
+    def update_source(self, source_id: int, updates: Dict) -> bool:
+        return False
+
+    def delete_source(self, source_id: int) -> bool:
+        return False
+
+    def set_contract_feedback(self, contract_id: int, feedback: str) -> bool:
+        return False
+
+    def register_device(self, channel: str, device_token: str, device_name: str = "") -> int:
+        return 0
+
+    def list_devices(self, channel: Optional[str] = None) -> List[Dict]:
+        return []
+
+    def delete_device(self, channel: str, device_token: str) -> bool:
+        return False
+
+    def save_webpage_diff(self, diff: Dict) -> int:
+        return 0
+
+    def get_latest_webpage_diff(self, source_id: int) -> Optional[Dict]:
+        return None
+
 
 def convert_crawl_results_to_news_data(
     results: Dict[str, Dict],

@@ -322,7 +322,8 @@ class AIFilter:
             interests_content: 用户的兴趣描述（含质量过滤要求）
 
         Returns:
-            成功返回 [{"news_item_id": int, "tag_id": int, "relevance_score": float}, ...]（无匹配时为空列表）；
+            成功返回 [{"news_item_id": int, "tag_id": int, "relevance_score": float,
+                      "reason": str}, ...]（无匹配时为空列表；reason 为模型给出的简短理由，可能为空）；
             调用失败返回 None（用于区分"无匹配"与"调用失败"，失败批次不标记已分析以便下次重试）
         """
         if not titles or not tags:
@@ -436,7 +437,10 @@ class AIFilter:
                 skipped_news_ids += 1
                 continue
 
-            # 收集此条新闻的所有候选 tag
+            # 可选的简短命中理由（静流 hit_reason 使用；模型不输出时为空）
+            item_reason = str(item.get("reason", "") or "").strip()
+
+            # 收集此条新闻的所有候选
             candidates = []
 
             if "tag_id" in item:
@@ -486,6 +490,7 @@ class AIFilter:
                         "news_item_id": news_id,
                         "tag_id": best_tag_id,
                         "relevance_score": best_score,
+                        "reason": item_reason[:80] if item_reason else "",
                     }
 
         results = list(best_per_news.values())

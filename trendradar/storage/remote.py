@@ -158,8 +158,11 @@ class RemoteStorageBackend(SQLiteStorageMixin, StorageBackend):
             db_type: 数据库类型 ("news" 或 "rss")
 
         Returns:
-            远程对象键，如 "news/2025-12-28.db" 或 "rss/2025-12-28.db"
+            远程对象键，如 "news/2025-12-28.db" 或 "rss/2025-12-28.db"；
+            state 库为固定键 "state/state.db"（不带日期，跨日持久）
         """
+        if db_type == "state":
+            return "state/state.db"
         date_folder = self._format_date_folder(date)
         return f"{db_type}/{date_folder}.db"
 
@@ -174,6 +177,10 @@ class RemoteStorageBackend(SQLiteStorageMixin, StorageBackend):
         Returns:
             本地临时文件路径
         """
+        if db_type == "state":
+            db_dir = self.temp_dir / "state"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            return db_dir / "state.db"
         date_folder = self._format_date_folder(date)
         db_dir = self.temp_dir / db_type
         db_dir.mkdir(parents=True, exist_ok=True)
@@ -570,6 +577,104 @@ class RemoteStorageBackend(SQLiteStorageMixin, StorageBackend):
 
     def get_all_rss_ids(self, date=None):
         return self._get_all_rss_ids_impl(date)
+
+    # ========================================
+    # 静流：源注册与推送契约（state 库，写后立即同步）
+    # ========================================
+
+    def _sync_state(self) -> bool:
+        """state 库写入后同步到远程（批量模式下记入脏集合，由 end_batch 统一上传）"""
+        return self._upload_sqlite(db_type="state")
+
+    def register_source(self, source):
+        source_id = self._register_source_impl(source)
+        if source_id > 0:
+            self._sync_state()
+        return source_id
+
+    def list_sources(self, source_type=None, status="active"):
+        return self._list_sources_impl(source_type, status)
+
+    def get_source(self, source_id):
+        return self._get_source_impl(source_id)
+
+    def update_source_check(self, source_id, checked_at_iso, message=""):
+        success = self._update_source_check_impl(source_id, checked_at_iso, message)
+        if success:
+            self._sync_state()
+        return success
+
+    def set_source_status(self, source_id, status):
+        success = self._set_source_status_impl(source_id, status)
+        if success:
+            self._sync_state()
+        return success
+
+    def is_fingerprint_pushed(self, fingerprint):
+        return self._is_fingerprint_pushed_impl(fingerprint)
+
+    def save_push_contract(self, contract):
+        contract_id = self._save_push_contract_impl(contract)
+        if contract_id > 0:
+            self._sync_state()
+        return contract_id
+
+    def mark_contract_pushed(self, contract_id, channel, pushed_at_iso):
+        success = self._mark_contract_pushed_impl(contract_id, channel, pushed_at_iso)
+        if success:
+            self._sync_state()
+        return success
+
+    def get_pending_contracts(self, min_confidence="medium", limit=100):
+        return self._get_pending_contracts_impl(min_confidence, limit)
+
+    def get_recent_contracts(self, limit=50):
+        return self._get_recent_contracts_impl(limit)
+
+    def get_last_contract_pushed_at(self, interest_id):
+        return self._get_last_contract_pushed_at_impl(interest_id)
+
+    def update_source(self, source_id, updates):
+        success = self._update_source_impl(source_id, updates)
+        if success:
+            self._sync_state()
+        return success
+
+    def delete_source(self, source_id):
+        success = self._delete_source_impl(source_id)
+        if success:
+            self._sync_state()
+        return success
+
+    def set_contract_feedback(self, contract_id, feedback):
+        success = self._set_contract_feedback_impl(contract_id, feedback)
+        if success:
+            self._sync_state()
+        return success
+
+    def register_device(self, channel, device_token, device_name=""):
+        device_id = self._register_device_impl(channel, device_token, device_name)
+        if device_id > 0:
+            self._sync_state()
+        return device_id
+
+    def list_devices(self, channel=None):
+        return self._list_devices_impl(channel)
+
+    def delete_device(self, channel, device_token):
+        success = self._delete_device_impl(channel, device_token)
+        if success:
+            self._sync_state()
+        return success
+
+    def save_webpage_diff(self, diff):
+        diff_id = self._save_webpage_diff_impl(diff)
+        if diff_id > 0:
+            self._sync_state()
+        return diff_id
+
+    def get_latest_webpage_diff(self, source_id):
+        return self._get_latest_webpage_diff_impl(source_id)
 
     # ========================================
     # 远程特有功能：TXT/HTML 快照（临时目录）

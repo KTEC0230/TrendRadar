@@ -212,6 +212,56 @@ def _load_rss_config(config_data: Dict) -> Dict:
     }
 
 
+def _load_jingliu_config(config_data: Dict) -> Dict:
+    """加载静流（推送即契约）配置"""
+    jingliu = config_data.get("jingliu", {})
+    webpage = jingliu.get("webpage", {})
+    apns = jingliu.get("apns", {})
+    fcm = jingliu.get("fcm", {})
+    api = jingliu.get("api", {})
+
+    enabled_env = _get_env_bool("JINGLIU_ENABLED")
+
+    def _int(value, default):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    api_port = _int(api.get("port", 8807), 8807)
+    api_port_env = _get_env_int_or_none("JINGLIU_API_PORT")
+
+    return {
+        "ENABLED": enabled_env if enabled_env is not None else jingliu.get("enabled", False),
+        "RSSHUB_BASE": _get_env_str("JINGLIU_RSSHUB_BASE") or jingliu.get("rsshub_base", ""),
+        "WEBPAGE": {
+            "MIN_CHANGE_CHARS": _int(webpage.get("min_change_chars", 50), 50),
+            "COOLDOWN_MINUTES": _int(webpage.get("cooldown_minutes", 15), 15),
+            "REQUEST_TIMEOUT": _int(webpage.get("request_timeout", 15), 15),
+        },
+        "APNS": {
+            "ENABLED": apns.get("enabled", False),
+            "TEAM_ID": _get_env_str("APNS_TEAM_ID") or apns.get("team_id", ""),
+            "KEY_ID": _get_env_str("APNS_KEY_ID") or apns.get("key_id", ""),
+            "KEY_FILE": _get_env_str("APNS_KEY_FILE") or apns.get("key_file", ""),
+            "BUNDLE_ID": _get_env_str("APNS_BUNDLE_ID") or apns.get("bundle_id", ""),
+            "PRODUCTION": apns.get("production", True),
+            "DEVICE_TOKENS": _get_env_str("APNS_DEVICE_TOKENS") or apns.get("device_tokens", ""),
+        },
+        "FCM": {
+            "ENABLED": fcm.get("enabled", False),
+            "PROJECT_ID": _get_env_str("FCM_PROJECT_ID") or fcm.get("project_id", ""),
+            "CREDENTIALS_FILE": _get_env_str("GOOGLE_APPLICATION_CREDENTIALS") or fcm.get("credentials_file", ""),
+            "DEVICE_TOKENS": _get_env_str("FCM_DEVICE_TOKENS") or fcm.get("device_tokens", ""),
+        },
+        "API": {
+            "HOST": _get_env_str("JINGLIU_API_HOST") or api.get("host", "127.0.0.1"),
+            "PORT": api_port_env if api_port_env is not None else api_port,
+            "AUTH_TOKEN": _get_env_str("JINGLIU_API_TOKEN") or api.get("auth_token", ""),
+        },
+    }
+
+
 def _load_display_config(config_data: Dict) -> Dict:
     """加载推送内容显示配置"""
     display = config_data.get("display", {})
@@ -593,6 +643,9 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     # 推送内容显示配置
     config["DISPLAY"] = _load_display_config(config_data)
+
+    # 静流（推送即契约）配置
+    config["JINGLIU"] = _load_jingliu_config(config_data)
 
     # 存储配置
     config["STORAGE"] = _load_storage_config(config_data)

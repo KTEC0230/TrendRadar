@@ -173,8 +173,19 @@ class NewsAnalyzer:
                 cfg["BARK_URL"],
                 cfg["SLACK_WEBHOOK_URL"],
                 cfg["GENERIC_WEBHOOK_URL"],
+                # 静流契约渠道（APNs/FCM）也算已配置通知
+                self._has_jingliu_push_configured(),
             ]
         )
+
+    def _has_jingliu_push_configured(self) -> bool:
+        """静流 APNs/FCM 契约渠道是否已配置且可用"""
+        if not self.ctx.jingliu_enabled:
+            return False
+        jingliu_config = self.ctx.config.get("JINGLIU", {})
+        apns_ready = jingliu_config.get("APNS", {}).get("ENABLED", False) and jingliu_config.get("APNS", {}).get("DEVICE_TOKENS", "")
+        fcm_ready = jingliu_config.get("FCM", {}).get("ENABLED", False) and jingliu_config.get("FCM", {}).get("DEVICE_TOKENS", "")
+        return bool(apns_ready or fcm_ready)
 
     def _has_valid_content(
         self, stats: List[Dict], new_titles: Optional[Dict] = None
@@ -870,6 +881,10 @@ class NewsAnalyzer:
             # 是否发送版本更新信息
             update_info_to_send = self.update_info if cfg["SHOW_VERSION_UPDATE"] else None
 
+            # 静流：契约推送（独立门控 + APNs/FCM，不影响下方报告式渠道）
+            if self.ctx.jingliu_enabled:
+                self._dispatch_push_contracts(stats, rss_items)
+
             # 使用 NotificationDispatcher 发送到所有渠道
             # RSS/独立展示区数据已在分析流水线中翻译过，跳过重复翻译（仅翻译热榜 report_data）
             dispatcher = self.ctx.create_notification_dispatcher()
@@ -1040,6 +1055,12 @@ class NewsAnalyzer:
             if not feeds:
                 print("[RSS] 没有启用的 RSS 源")
                 return None, None, None, set()
+
+            # 静流：合并抖音适配器生成的 RSSHub 源（jingliu.enabled 且配置 rsshub_base 时）
+            douyin_feeds = self._collect_douyin_rss_feeds()
+            if douyin_feeds:
+                feeds.extend(douyin_feeds)
+                print(f"[RSS] 已合并 {len(douyin_feeds)} 个抖音 RSSHub 源")
 
             # 创建抓取器
             rss_config = self.ctx.rss_config
@@ -1333,6 +1354,57 @@ class NewsAnalyzer:
                     print(f"  ... 还有 {len(filtered_details) - 10} 篇被过滤")
 
         return rss_items
+
+    # ========================================
+    # 静流：契约推送与 URL 监控
+    # ========================================
+
+    def _dispatch_push_contracts(self, stats, rss_items) -> None:
+        """将本轮筛选命中的内容转成推送契约，经门控后走 APNs/FCM 推送"""
+        try:
+            builder = self.ctx.get_push_contract_builder()
+            filter_method = self.filter_method or self.ctx.filter_method
+            contracts = builder.build_from_stats(
+                stats or [], filter_method=filter_method, source_type="hotlist",
+            )
+            contracts.extend(builder.build_from_stats(
+                rss_items or [], filter_method=filter_method, source_type="rss",
+            ))
+            if not contracts:
+                return
+
+            gate = builder.gate_and_rank(contracts)
+            if not gate.pushable:
+                return
+
+            dispatcher = self.ctx.create_notification_dispatcher()
+            results = dispatcher.dispatch_contracts(gate.pushable)
+            builder.record_pushed(gate.pushable, results)
+        except Exception as e:
+            print(f"[静流] 契约推送失败: {e}")
+
+    def _run_jingliu_monitor_cycle(self) -> None:
+        """执行一轮 URL 监控到期检查（独立于热榜 timeline，失败不影响主流程）"""
+        try:
+            monitor_scheduler = self.ctx.get_monitor_scheduler()
+            monitor_scheduler.run_due_cycle()
+        except Exception as e:
+            print(f"[静流] URL 监控调度失败: {e}")
+
+    def _collect_douyin_rss_feeds(self) -> List:
+        """获取抖音适配器生成的 RSS 源配置（jingliu.enabled 且配置 rsshub_base 时）"""
+        try:
+            if not self.ctx.jingliu_enabled:
+                return []
+            from trendradar.collectors.douyin_adapter import DouyinAdapter
+
+            rsshub_base = self.ctx.config.get("JINGLIU", {}).get("RSSHUB_BASE", "")
+            if not rsshub_base:
+                return []
+            return DouyinAdapter.export_feed_configs(self.storage_manager, rsshub_base)
+        except Exception as e:
+            print(f"[静流] 抖音源生成失败: {e}")
+            return []
 
     def _filter_rss_by_keywords(self, rss_items: List[Dict]) -> List[Dict]:
         """使用关键词文件过滤 RSS 条目"""
@@ -1628,6 +1700,10 @@ class NewsAnalyzer:
                 rss_items=rss_items, rss_new_items=rss_new_items,
                 raw_rss_items=raw_rss_items, rss_new_urls=rss_new_urls
             )
+
+            # 静流：URL 监控独立调度（按源 check_interval 驱动，与热榜 timeline 无关）
+            if self.ctx.jingliu_enabled:
+                self._run_jingliu_monitor_cycle()
 
         except Exception as e:
             print(f"分析流程执行出错: {e}")

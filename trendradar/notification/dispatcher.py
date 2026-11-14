@@ -54,6 +54,7 @@ class NotificationDispatcher:
         get_time_func: Callable,
         split_content_func: Callable,
         translator: Optional["AITranslator"] = None,
+        jingliu_device_provider: Optional[Callable[[], Dict[str, List[str]]]] = None,
     ):
         """
         初始化通知调度器
@@ -63,12 +64,15 @@ class NotificationDispatcher:
             get_time_func: 获取当前时间的函数
             split_content_func: 内容分批函数
             translator: AI 翻译器实例（可选）
+            jingliu_device_provider: 静流动态设备 token 提供器（返回 {"apns": [...], "fcm": [...]})，
+                与 config.yaml 静态 device_tokens 合并生效；None 表示只用静态配置
         """
         self.config = config
         self.get_time_func = get_time_func
         self.split_content_func = split_content_func
         self.max_accounts = config.get("MAX_ACCOUNTS_PER_CHANNEL", 3)
         self.translator = translator
+        self.jingliu_device_provider = jingliu_device_provider
 
     def translate_content(
         self,
@@ -361,6 +365,137 @@ class NotificationDispatcher:
             results["email"] = self._send_email(report_type, html_file_path)
 
         return results
+
+    # ========================================
+    # 静流：契约推送（APNs/FCM 一等公民）
+    # ========================================
+
+    def dispatch_contracts(self, contracts: List[Dict]) -> Dict[str, bool]:
+        """
+        按契约逐条推送到移动端（与 dispatch_all 的报告式推送互不影响）。
+
+        Args:
+            contracts: PushContract 列表（须已实现 to_notification_payload()）
+
+        Returns:
+            Dict[str, bool]: 每个渠道的发送结果，key 为渠道名
+        """
+        results = {}
+        if not contracts:
+            return results
+
+        jingliu_config = self.config.get("JINGLIU", {})
+        apns_config = jingliu_config.get("APNS", {})
+        fcm_config = jingliu_config.get("FCM", {})
+
+        if apns_config.get("ENABLED"):
+            results["apns"] = self._send_apns(contracts, apns_config)
+
+        if fcm_config.get("ENABLED"):
+            results["fcm"] = self._send_fcm(contracts, fcm_config)
+
+        if not results:
+            print("[静流] 未配置 APNs/FCM 推送渠道，契约未发送（已保留在台账）")
+
+        return results
+
+    def _resolve_jingliu_tokens(self, channel: str, static_tokens: str) -> List[str]:
+        """合并静态配置 token（; 分隔）与 App 动态注册 token，去重保序"""
+        from trendradar.core.config import parse_multi_account_config
+
+        merged: List[str] = []
+        for token in parse_multi_account_config(static_tokens):
+            if token and token not in merged:
+                merged.append(token)
+        if self.jingliu_device_provider:
+            try:
+                devices = self.jingliu_device_provider() or {}
+                for token in devices.get(channel, []) or []:
+                    if token and token not in merged:
+                        merged.append(token)
+            except Exception as e:
+                print(f"[静流] 读取动态设备列表失败（仅用静态配置）: {e}")
+        return merged
+
+    def _send_apns(self, contracts: List[Dict], apns_config: Dict) -> bool:
+        """APNs 多设备推送：静态 device_tokens + App 动态注册 token 合并"""
+        from pathlib import Path
+
+        from trendradar.core.config import (
+            get_account_at_index,
+            limit_accounts,
+        )
+        from trendradar.notifiers.apns_notifier import send_to_apns
+
+        tokens = self._resolve_jingliu_tokens("apns", apns_config.get("DEVICE_TOKENS", ""))
+        tokens = limit_accounts(tokens, self.max_accounts, "APNs")
+        if not tokens:
+            print("[静流] APNs 已启用但没有可用设备（静态 device_tokens 与注册设备均为空）")
+            return False
+
+        key_file = apns_config.get("KEY_FILE", "")
+        try:
+            private_key = Path(key_file).read_text(encoding="utf-8") if key_file else ""
+        except Exception as e:
+            print(f"[静流] 读取 APNs 私钥文件失败: {e}")
+            return False
+
+        success_count = 0
+        total_count = 0
+        for contract in contracts:
+            payload = contract.to_notification_payload()
+            for token in tokens:
+                total_count += 1
+                ok = send_to_apns(
+                    token,
+                    payload,
+                    team_id=apns_config.get("TEAM_ID", ""),
+                    key_id=apns_config.get("KEY_ID", ""),
+                    private_key=private_key,
+                    bundle_id=apns_config.get("BUNDLE_ID", ""),
+                    production=apns_config.get("PRODUCTION", True),
+                )
+                if ok:
+                    success_count += 1
+
+        print(f"[静流] APNs 推送完成: {success_count}/{total_count} 成功")
+        return success_count > 0
+
+    def _send_fcm(self, contracts: List[Dict], fcm_config: Dict) -> bool:
+        """FCM 多设备推送：静态 device_tokens + App 动态注册 token 合并"""
+        from trendradar.core.config import (
+            limit_accounts,
+        )
+        from trendradar.notifiers.fcm_notifier import load_service_account, send_to_fcm
+
+        tokens = self._resolve_jingliu_tokens("fcm", fcm_config.get("DEVICE_TOKENS", ""))
+        tokens = limit_accounts(tokens, self.max_accounts, "FCM")
+        if not tokens:
+            print("[静流] FCM 已启用但没有可用设备（静态 device_tokens 与注册设备均为空）")
+            return False
+
+        credentials_file = fcm_config.get("CREDENTIALS_FILE", "")
+        service_account = load_service_account(credentials_file) if credentials_file else None
+        if not service_account:
+            return False
+
+        success_count = 0
+        total_count = 0
+        for contract in contracts:
+            payload = contract.to_notification_payload()
+            for token in tokens:
+                total_count += 1
+                ok = send_to_fcm(
+                    token,
+                    payload,
+                    project_id=fcm_config.get("PROJECT_ID", ""),
+                    service_account=service_account,
+                )
+                if ok:
+                    success_count += 1
+
+        print(f"[静流] FCM 推送完成: {success_count}/{total_count} 成功")
+        return success_count > 0
 
     def _send_to_multi_accounts(
         self,

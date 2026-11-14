@@ -536,3 +536,7 @@ jingliu:
     host: "127.0.0.1"
     port: 8807
     auth_token: ""                    # Bearer token (required, or env JINGLIU_API_TOKEN); empty = refuse to start
+
+  expo:                               # Expo App push (for the mobile/ app; no Google credentials needed)
+    enabled: true                     # forwarded via Expo's push service; registered ExpoPushTokens merge in automatically
+    device_tokens: ""                 # optional: manual ExpoPushTokens, ; separated

@@ -220,6 +220,7 @@ def _load_jingliu_config(config_data: Dict) -> Dict:
     fcm = jingliu.get("fcm", {})
     api = jingliu.get("api", {})
     digest = jingliu.get("digest", {})
+    expo = jingliu.get("expo", {})
 
     enabled_env = _get_env_bool("JINGLIU_ENABLED")
 
@@ -265,6 +266,10 @@ def _load_jingliu_config(config_data: Dict) -> Dict:
             "INTERVAL_MINUTES": _int(digest.get("interval_minutes", 240), 240),
             "MAX_ITEMS": _int(digest.get("max_items", 10), 10),
             "MIN_CONFIDENCE": digest.get("min_confidence", "low"),
+        },
+        "EXPO": {
+            "ENABLED": expo.get("enabled", False),
+            "DEVICE_TOKENS": _get_env_str("EXPO_DEVICE_TOKENS") or expo.get("device_tokens", ""),
         },
     }
 

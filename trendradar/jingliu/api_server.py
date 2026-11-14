@@ -148,8 +148,8 @@ class JingliuApiServer:
         channel = (body or {}).get("channel", "")
         device_token = (body or {}).get("device_token", "").strip()
         device_name = str((body or {}).get("device_name", ""))[:100]
-        if channel not in ("apns", "fcm"):
-            raise ApiError(400, "channel 必须为 apns 或 fcm")
+        if channel not in ("apns", "fcm", "expo"):
+            raise ApiError(400, "channel 必须为 apns / fcm / expo")
         if not device_token:
             raise ApiError(400, "device_token 不能为空")
 
@@ -164,8 +164,8 @@ class JingliuApiServer:
 
     def _list_devices(self, query: Dict[str, list]) -> Tuple[int, Dict]:
         channel = (query.get("channel") or [None])[0]
-        if channel and channel not in ("apns", "fcm"):
-            raise ApiError(400, "channel 必须为 apns 或 fcm")
+        if channel and channel not in ("apns", "fcm", "expo"):
+            raise ApiError(400, "channel 必须为 apns / fcm / expo")
         storage = self.new_storage()
         try:
             return 200, {"devices": storage.list_devices(channel)}

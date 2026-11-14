@@ -387,12 +387,16 @@ class NotificationDispatcher:
         jingliu_config = self.config.get("JINGLIU", {})
         apns_config = jingliu_config.get("APNS", {})
         fcm_config = jingliu_config.get("FCM", {})
+        expo_config = jingliu_config.get("EXPO", {})
 
         if apns_config.get("ENABLED"):
             results["apns"] = self._send_apns(contracts, apns_config)
 
         if fcm_config.get("ENABLED"):
             results["fcm"] = self._send_fcm(contracts, fcm_config)
+
+        if expo_config.get("ENABLED"):
+            results["expo"] = self._send_expo(contracts, expo_config)
 
         if not results:
             print("[静流] 未配置 APNs/FCM 推送渠道，契约未发送（已保留在台账）")
@@ -495,6 +499,29 @@ class NotificationDispatcher:
                     success_count += 1
 
         print(f"[静流] FCM 推送完成: {success_count}/{total_count} 成功")
+        return success_count > 0
+
+    def _send_expo(self, contracts: List[Dict], expo_config: Dict) -> bool:
+        """Expo 推送：静态 device_tokens + App 注册的 ExpoPushToken 合并"""
+        from trendradar.core.config import limit_accounts
+        from trendradar.notifiers.expo_notifier import send_to_expo
+
+        tokens = self._resolve_jingliu_tokens("expo", expo_config.get("DEVICE_TOKENS", ""))
+        tokens = limit_accounts(tokens, self.max_accounts, "Expo")
+        if not tokens:
+            print("[静流] Expo 已启用但没有可用设备（静态 device_tokens 与注册设备均为空）")
+            return False
+
+        success_count = 0
+        total_count = 0
+        for contract in contracts:
+            payload = contract.to_notification_payload()
+            for token in tokens:
+                total_count += 1
+                if send_to_expo(token, payload):
+                    success_count += 1
+
+        print(f"[静流] Expo 推送完成: {success_count}/{total_count} 成功")
         return success_count > 0
 
     def _send_to_multi_accounts(

@@ -1,5 +1,8 @@
 /**
- * 设置屏幕：后端地址 / token / 设备名 / EAS projectId + 推送注册 + 连接测试
+ * 设置屏幕：后端地址 / token / 设备名 + 通知开启 + 连接测试
+ *
+ * 推送架构（国内网络）：无远程推送依赖，改为
+ * "通知权限 + WorkManager 后台轮询(15分钟) + 本地通知"，App 前台时实时拉取。
  */
 
 import React, { useState } from "react";
@@ -14,19 +17,20 @@ import {
 } from "react-native";
 
 import { Settings, checkHealth } from "../api";
-import { registerPush } from "../push";
+import { enableBackgroundPolling, pollingEnabled } from "../background";
+import { checkForNewContracts, ensureNotificationReady } from "../notifications";
 
 interface SettingsScreenProps {
   settings: Settings;
   onChange: (settings: Settings) => void;
-  onRegistered: () => void; // 注册成功后刷新推送流
+  onRefresh: () => void;
 }
 
 type StatusKind = "idle" | "ok" | "error";
 
-export function SettingsScreen({ settings, onChange, onRegistered }: SettingsScreenProps) {
+export function SettingsScreen({ settings, onChange, onRefresh }: SettingsScreenProps) {
   const [draft, setDraft] = useState<Settings>(settings);
-  const [busy, setBusy] = useState<"save" | "register" | "test" | null>(null);
+  const [busy, setBusy] = useState<"save" | "notify" | "test" | null>(null);
   const [status, setStatus] = useState<{ kind: StatusKind; message: string }>({
     kind: "idle",
     message: "",
@@ -37,7 +41,7 @@ export function SettingsScreen({ settings, onChange, onRegistered }: SettingsScr
   const onSave = async () => {
     setBusy("save");
     try {
-      await onChange(draft); // 父组件负责持久化
+      await onChange(draft);
       setStatus({ kind: "ok", message: "设置已保存" });
     } catch (e) {
       setStatus({ kind: "error", message: (e as Error).message });
@@ -58,14 +62,22 @@ export function SettingsScreen({ settings, onChange, onRegistered }: SettingsScr
     }
   };
 
-  const onRegister = async () => {
-    setBusy("register");
+  const onEnableNotifications = async () => {
+    setBusy("notify");
     try {
       const saved = { ...draft };
-      await onChange(saved); // 先持久化再注册
-      const { token } = await registerPush(saved);
-      setStatus({ kind: "ok", message: `注册成功！ExpoPushToken：${token.slice(0, 28)}…` });
-      onRegistered();
+      await onChange(saved); // 先持久化再拉取
+      await ensureNotificationReady();
+      await enableBackgroundPolling();
+      const fresh = await checkForNewContracts(saved); // 立即拉一次验证 + 建基线
+      const registered = await pollingEnabled();
+      setStatus({
+        kind: "ok",
+        message: `通知已开启，后台轮询${
+          registered ? "已注册（约 15 分钟一次）" : "注册待系统生效"
+        }。${fresh > 0 ? `本次发现 ${fresh} 条新内容。` : ""}App 在前台时会实时拉取。`,
+      });
+      onRefresh();
     } catch (e) {
       setStatus({ kind: "error", message: (e as Error).message });
     } finally {
@@ -80,19 +92,19 @@ export function SettingsScreen({ settings, onChange, onRegistered }: SettingsScr
         style={styles.input}
         value={draft.baseUrl}
         onChangeText={(v) => update({ baseUrl: v })}
-        placeholder="http://192.168.1.10:8807"
+        placeholder="https://xxx.trycloudflare.com"
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
       />
-      <Text style={styles.hint}>API 服务地址（jingliu.api.host:port），/api 会自动补全</Text>
+      <Text style={styles.hint}>API 服务地址，/api 会自动补全</Text>
 
       <Text style={styles.label}>Bearer Token</Text>
       <TextInput
         style={styles.input}
         value={draft.authToken}
         onChangeText={(v) => update({ authToken: v })}
-        placeholder="config.yaml 的 jingliu.api.auth_token"
+        placeholder="start-api.bat 里的 token"
         autoCapitalize="none"
         autoCorrect={false}
         secureTextEntry
@@ -106,16 +118,6 @@ export function SettingsScreen({ settings, onChange, onRegistered }: SettingsScr
         placeholder="我的安卓手机"
       />
 
-      <Text style={styles.label}>EAS projectId</Text>
-      <TextInput
-        style={styles.input}
-        value={draft.projectId}
-        onChangeText={(v) => update({ projectId: v })}
-        placeholder="npx eas init 后生成（留空则读 app.json）"
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-
       <View style={styles.buttonRow}>
         <TouchableOpacity style={[styles.button, styles.primary]} onPress={onSave} disabled={busy !== null}>
           {busy === "save" ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.primaryText}>保存设置</Text>}
@@ -127,17 +129,18 @@ export function SettingsScreen({ settings, onChange, onRegistered }: SettingsScr
 
       <TouchableOpacity
         style={[styles.button, styles.registerBtn, busy !== null && styles.disabled]}
-        onPress={onRegister}
+        onPress={onEnableNotifications}
         disabled={busy !== null}
       >
-        {busy === "register" ? (
+        {busy === "notify" ? (
           <ActivityIndicator color="#fff" size="small" />
         ) : (
-          <Text style={styles.primaryText}>🔔 注册到推送服务</Text>
+          <Text style={styles.primaryText}>🔔 开启通知 + 后台刷新</Text>
         )}
       </TouchableOpacity>
       <Text style={styles.hint}>
-        注册流程：通知权限 → 获取 ExpoPushToken → 写入后端 devices 表。后端推送时静态配置与注册设备自动合并。
+        推送机制（国内网络可用，无 Google 依赖）：App 前台实时拉取；后台由系统 WorkManager
+        约每 15 分钟拉取一次，有新内容弹本地通知。首次开启只建基线不通知。
       </Text>
 
       {status.message ? (

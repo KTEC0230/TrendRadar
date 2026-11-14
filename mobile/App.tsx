@@ -1,17 +1,20 @@
 /**
- * 静流 App 入口：设置/推送流两屏切换 + 设置持久化
+ * 静流 App 入口：设置/推送流两屏切换 + 设置持久化 + 前台实时拉取
  */
 
-import React, { useCallback, useEffect, useState } from "react";
-import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 
 import { Settings } from "./src/api";
 import { loadSettings, saveSettings } from "./src/settings";
+import { checkForNewContracts } from "./src/notifications";
 import { FeedScreen } from "./src/screens/FeedScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 
 type Tab = "feed" | "settings";
+
+const FOREGROUND_POLL_MS = 30 * 1000;
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>({
@@ -23,20 +26,49 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<Tab>("feed");
   const [refreshToken, setRefreshToken] = useState(0);
+  const settingsRef = useRef(settings);
 
   useEffect(() => {
     loadSettings().then((loaded) => {
+      settingsRef.current = loaded;
       setSettings(loaded);
       setReady(true);
     });
   }, []);
 
+  // 前台实时拉取：回到前台立即一次 + 每 30 秒轮询（后台交给 WorkManager）
+  useEffect(() => {
+    if (!ready) return;
+
+    const pull = () => {
+      const current = settingsRef.current;
+      if (!current.baseUrl || !current.authToken) return;
+      checkForNewContracts(current)
+        .then((fresh) => {
+          if (fresh > 0) setRefreshToken((n) => n + 1);
+        })
+        .catch(() => {});
+    };
+
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") pull();
+    });
+    pull();
+    const timer = setInterval(pull, FOREGROUND_POLL_MS);
+
+    return () => {
+      subscription.remove();
+      clearInterval(timer);
+    };
+  }, [ready]);
+
   const handleSettingsChange = useCallback(async (next: Settings) => {
+    settingsRef.current = next;
     setSettings(next);
     await saveSettings(next);
   }, []);
 
-  const handleRegistered = useCallback(() => {
+  const handleRefresh = useCallback(() => {
     setRefreshToken((n) => n + 1);
     setTab("feed");
   }, []);
@@ -57,7 +89,7 @@ export default function App() {
         {tab === "feed" ? (
           <FeedScreen settings={settings} refreshToken={refreshToken} />
         ) : (
-          <SettingsScreen settings={settings} onChange={handleSettingsChange} onRegistered={handleRegistered} />
+          <SettingsScreen settings={settings} onChange={handleSettingsChange} onRefresh={handleRefresh} />
         )}
       </View>
 

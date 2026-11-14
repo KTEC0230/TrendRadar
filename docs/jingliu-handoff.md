@@ -18,10 +18,10 @@
 | APNs/FCM 直连推送 | ✅ 完成 | 代码就绪，**缺真实凭据验证** |
 | App HTTP API | ✅ 完成 | 13 个端点，冒烟 13/13 |
 | AI 理由字段（LLM reason） | ✅ 完成 | prompt 已带可选字段，未用真实 LLM 跑过 |
-| 移动端 App（iOS/Android） | ❌ 未做 | API 层已就绪，App 是下一步 |
+| 安卓端 App（Expo，mobile/） | ✅ 代码完成 | 推送流/反馈/设备注册两屏；待真机联调（Expo Go 即可），iOS 不做 |
 | 摘要池定时推送（Digest） | ✅ 完成 | low 置信度契约攒批，按 interval_minutes 汇总一条推送 |
 
-**测试基线**：`uv run pytest tests/` → 82 passed + 35 subtests（新增 5 个测试文件 52 例）。
+**测试基线**：`uv run pytest tests/` → 87 passed + 35 subtests；移动端 `cd mobile && npx tsc --noEmit` 通过。
 **端到端冒烟**：`D:\K\zcode\tmp-jingliu-smoke\smoke.py`（推送链路 10/10）、`api_smoke.py`（API 13/13）。
 
 ---
@@ -43,7 +43,10 @@ trendradar/collectors/
 
 trendradar/notifiers/
 ├── apns_notifier.py         # APNs HTTP/2（.p8 ES256 JWT）
-└── fcm_notifier.py          # FCM HTTP v1（service account OAuth2）
+├── fcm_notifier.py          # FCM HTTP v1（service account OAuth2）
+└── expo_notifier.py         # Expo push 服务转发（安卓 App 用，零 Google 凭据）
+
+mobile/                    # Expo SDK 58 安卓端 App（推送流/设置/推送注册，tsc strict）
 
 trendradar/storage/jingliu_schema.sql   # 6 张表 DDL（sources/push_contracts/webpage_diffs/devices）
 ```
@@ -122,6 +125,7 @@ uv run python D:\K\zcode\tmp-jingliu-smoke\api_smoke.py    # API 冒烟
 | `fcm.*` | — | project_id/credentials_file/device_tokens |
 | `api.host/port/auth_token` | 127.0.0.1/8807/"" | API 服务；**auth_token 为空则拒绝启动** |
 | `digest.enabled/interval_minutes/max_items/min_confidence` | false/240/10/low | 摘要池定时推送：到期把 pending 契约聚合为一条，送达后标记 channel=digest |
+| `expo.enabled/device_tokens` | true/"" | Expo 通道（安卓 App）：经 exp.host 转发 FCM，零 Google 凭据；App 注册的 ExpoPushToken 自动合并 |
 
 ### 4.2 环境变量（优先于 config，CI/容器友好）
 
@@ -179,7 +183,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
   - `sources`：监控源注册（config/selector_config 为 JSON 列，读取时已反序列化）
   - `push_contracts`：推送台账。**核心约束**：部分唯一索引 `UNIQUE(content_fingerprint) WHERE pushed_at IS NOT NULL`——未推送的低置信度记录不占指纹，高置信度版本后续仍可推
   - `webpage_diffs`：变更历史，`diff_summary.blocks` 存全量块快照（下次 diff 的基线）
-  - `devices`：App 动态注册的推送设备（与 config 静态 device_tokens 合并、去重保序、`max_accounts_per_channel` 截断）
+  - `devices`：App 动态注册的推送设备（channel=apns/fcm/expo；与 config 静态 device_tokens 合并、去重保序、`max_accounts_per_channel` 截断）
 - `output/news/{date}.db`、`output/rss/{date}.db`：TrendRadar 原有按日期分库（`ai_filter_results` 新增了 `reason` 列，老库自动迁移）
 - GH Actions（远程 S3 后端）下 state.db 以固定 key `state/state.db` 同步（`remote.py::_get_remote_db_key` 特例）
 
@@ -196,14 +200,16 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 7. **APNs/FCM 未用真实凭据跑过**：代码路径有单测覆盖载荷构造，端到端发送待凭据配置后验证（第一步跑 `--test-notification` 风格的手工 curl）
 8. **state.db 并发**：API 进程与 trendradar 主进程分属不同进程写同一 SQLite——低频写无碍，如遇 `database is locked` 可给连接加 `busy_timeout`（当前未加，见 sqlite_mixin 可挂点）
 9. **smoke 脚本依赖**：`tmp-jingliu-smoke/` 在工作区（非仓库），重构后重跑前检查其引用路径
+10. **Expo 通道依赖 app.json projectId**：App 获取 ExpoPushToken 需要 EAS projectId（`npx eas init` 生成或设置页手填）；Expo push 有官方限速（约 600 条/分钟）；通知链路多一跳第三方（Expo→FCM），个人使用可接受
+11. **App 与后端同网要求**：Expo Go 调试时手机需能访问后端地址（局域网/公网），http 明文已允许（自部署场景）
 
 ---
 
 ## 8. 路线图（建议顺序）
 
-1. **APNs/FCM 凭据配置 + 真机首推验证**（阻塞 App 开发的唯一后端事项）
-2. **iOS MVP**（SwiftUI：token 注册 → 通知展示 → 反馈 → 推送流列表；API 已备齐）
-3. **Android**（Kotlin + FCM 同构）
-4. ~~摘要池推送~~（已完成：`jingliu/digest.py`，`digest.enabled` 开启）
-5. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述
-6. **上游同步**：见 2.2 冲突点清单
+1. **安卓真机联调**（当前阶段）：`cd mobile && npm install && npx expo start` → 手机 Expo Go 扫码 → 设置页填后端地址/token → `npx eas init`（免费 Expo 账号）→ App 内注册推送 → 后端触发一轮监控验证真机收推送
+2. **正式 APK**：`npx eas build -p android --profile preview` 云端构建（免 Android Studio）
+3. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要
+4. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪）
+5. **iOS**：用户明确不做；如未来需要，Expo 一套代码可直接 `eas build -p ios`（需 Apple 开发者账号）
+6. **上游同步**：见 2.2 冲突点清单；mobile/ 为新增目录无冲突风险

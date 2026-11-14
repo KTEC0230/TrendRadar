@@ -59,11 +59,11 @@ export async function registerPush(settings: Settings): Promise<RegisterResult> 
   }
 
   if (Platform.OS === "android") {
+    // 注意：channel 配置只保留 name/importance——vibrationPattern/lightColor
+    // 在 expo-notifications 原生桥接会触发 NullPointerException（已知问题）
     await Notifications.setNotificationChannelAsync("jingliu", {
       name: "静流推送",
       importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#4A7DFF",
     });
   }
 

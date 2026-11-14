@@ -18,7 +18,7 @@
 | APNs/FCM 直连推送 | ✅ 完成 | 代码就绪，**缺真实凭据验证** |
 | App HTTP API | ✅ 完成 | 13 个端点，冒烟 13/13 |
 | AI 理由字段（LLM reason） | ✅ 完成 | prompt 已带可选字段，未用真实 LLM 跑过 |
-| 安卓端 App（Expo，mobile/） | ✅ 代码完成 | 推送流/反馈/设备注册两屏；待真机联调（Expo Go 即可），iOS 不做 |
+| 安卓端 App（Expo，mobile/） | ✅ 代码完成 | **轮询+本地通知架构**（FCM 大陆网络不可用）；待真机联调，iOS 不做 |
 | 摘要池定时推送（Digest） | ✅ 完成 | low 置信度契约攒批，按 interval_minutes 汇总一条推送 |
 
 **测试基线**：`uv run pytest tests/` → 87 passed + 35 subtests；移动端 `cd mobile && npx tsc --noEmit` 通过。
@@ -44,9 +44,9 @@ trendradar/collectors/
 trendradar/notifiers/
 ├── apns_notifier.py         # APNs HTTP/2（.p8 ES256 JWT）
 ├── fcm_notifier.py          # FCM HTTP v1（service account OAuth2）
-└── expo_notifier.py         # Expo push 服务转发（安卓 App 用，零 Google 凭据）
+└── expo_notifier.py         # Expo push 服务转发（**当前 App 未使用**——FCM 大陆不可用后 App 转轮询，通道保留备用）
 
-mobile/                    # Expo SDK 58 安卓端 App（推送流/设置/推送注册，tsc strict）
+mobile/                    # Expo SDK 58 安卓端 App（轮询+本地通知，tsc strict；推送流/设置/WorkManager 后台任务）
 
 trendradar/storage/jingliu_schema.sql   # 6 张表 DDL（sources/push_contracts/webpage_diffs/devices）
 ```
@@ -125,7 +125,7 @@ uv run python D:\K\zcode\tmp-jingliu-smoke\api_smoke.py    # API 冒烟
 | `fcm.*` | — | project_id/credentials_file/device_tokens |
 | `api.host/port/auth_token` | 127.0.0.1/8807/"" | API 服务；**auth_token 为空则拒绝启动** |
 | `digest.enabled/interval_minutes/max_items/min_confidence` | false/240/10/low | 摘要池定时推送：到期把 pending 契约聚合为一条，送达后标记 channel=digest |
-| `expo.enabled/device_tokens` | true/"" | Expo 通道（安卓 App）：经 exp.host 转发 FCM，零 Google 凭据；App 注册的 ExpoPushToken 自动合并 |
+| `expo.enabled/device_tokens` | true/"" | Expo 通道（**当前 App 未使用**，保留备用）：经 exp.host 转发 FCM；安卓 App 已转"后台轮询+本地通知"架构（FCM 大陆网络不可用） |
 
 ### 4.2 环境变量（优先于 config，CI/容器友好）
 
@@ -200,16 +200,17 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 7. **APNs/FCM 未用真实凭据跑过**：代码路径有单测覆盖载荷构造，端到端发送待凭据配置后验证（第一步跑 `--test-notification` 风格的手工 curl）
 8. **state.db 并发**：API 进程与 trendradar 主进程分属不同进程写同一 SQLite——低频写无碍，如遇 `database is locked` 可给连接加 `busy_timeout`（当前未加，见 sqlite_mixin 可挂点）
 9. **smoke 脚本依赖**：`tmp-jingliu-smoke/` 在工作区（非仓库），重构后重跑前检查其引用路径
-10. **Expo 通道依赖 app.json projectId**：App 获取 ExpoPushToken 需要 EAS projectId（`npx eas init` 生成或设置页手填）；Expo push 有官方限速（约 600 条/分钟）；通知链路多一跳第三方（Expo→FCM），个人使用可接受
+10. **FCM/Google 网络硬限制（架构转折点，2026-11-14 确诊）**：firebaseinstallations/mtalk.google.com/fcm.googleapis.com 在用户网络全部不可达 → Expo Go 安卓不支持远程推送 + APK 内 getToken 失败（IOException）。App 已转"WorkManager 后台轮询（≥15 分钟）+ 本地通知"：无 Google 依赖、火绒/网络无感、App 前台实时拉取。若未来网络环境变化，`push.ts`（git 历史）与后端 expo/fcm 通道可直接复用
+11. **Expo Go 使用边界**：Expo Go（SDK 53+）安卓不支持远程推送，且本地通知渠道 API 在 Go 里可能 NPE——推送/通知相关验证一律用 EAS 构建的 APK；Expo Go 只适合 UI 与 API 联调
 11. **App 与后端同网要求**：Expo Go 调试时手机需能访问后端地址（局域网/公网），http 明文已允许（自部署场景）
 
 ---
 
 ## 8. 路线图（建议顺序）
 
-1. **安卓真机联调**（当前阶段）：`cd mobile && npm install && npx expo start` → 手机 Expo Go 扫码 → 设置页填后端地址/token → `npx eas init`（免费 Expo 账号）→ App 内注册推送 → 后端触发一轮监控验证真机收推送
-2. **正式 APK**：`npx eas build -p android --profile preview` 云端构建（免 Android Studio）
-3. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要
-4. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪）
-5. **iOS**：用户明确不做；如未来需要，Expo 一套代码可直接 `eas build -p ios`（需 Apple 开发者账号）
+1. **安卓真机联调**（当前阶段）：EAS 项目已链接（@ktec/jingliu）、FCM 凭据已配置、APK 构建链路已跑通（三轮）→ 手机安装 APK → 设置页填后端地址（trycloudflare）+ token → 测试连接 → 点"开启通知 + 后台刷新" → 后端触发一轮监控验证通知弹出
+2. **隧道固定地址**：trycloudflare 地址每次重启会变（App 地址要跟着改）；升级为命名隧道绑定用户 CF 域名（需 `cloudflared tunnel login` 一次 + 确定子域，如 jingliu.用户域名.com）
+3. **推送节奏优化**：当前后台 ≥15 分钟粒度；可评估 WebSocket 前台服务（即时但需常驻通知栏）或可控网关刷新
+4. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要（App 通知流会呈现）
+5. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪）
 6. **上游同步**：见 2.2 冲突点清单；mobile/ 为新增目录无冲突风险

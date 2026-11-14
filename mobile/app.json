@@ -6,7 +6,8 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "android": {
-      "package": "com.jingliu.app"
+      "package": "com.jingliu.app",
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
       "expo-notifications",

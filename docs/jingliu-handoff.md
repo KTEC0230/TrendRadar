@@ -1,6 +1,6 @@
 # 静流（JingLiu）项目交接文档
 
-> 更新：2026-11-14 ｜ 仓库：`C:\Users\27025\Desktop\github\TrendRadar`（fork，master）
+> 更新：2026-11-15 ｜ 仓库：`C:\Users\27025\Desktop\github\TrendRadar`（fork，master）
 > 读这份文档即可接手，无需翻阅历史对话。设计方案与勘察结论见 `docs/jingliu-refactor-plan.md`。
 
 ---
@@ -15,14 +15,28 @@
 | 契约层（PushContractBuilder） | ✅ 完成 | hit_reason 生成 + 三道门控 |
 | URL 监控（WebpageMonitor + MonitorScheduler） | ✅ 完成 | 六条防噪声规则，端到端验证过 |
 | 抖音适配器（DouyinAdapter） | ✅ 完成 | 仅 RSSHub 路由转换，路由可用性未实测 |
-| APNs/FCM 直连推送 | ✅ 完成 | 代码就绪，**缺真实凭据验证** |
-| App HTTP API | ✅ 完成 | 13 个端点，冒烟 13/13 |
-| AI 理由字段（LLM reason） | ✅ 完成 | prompt 已带可选字段，未用真实 LLM 跑过 |
-| 安卓端 App（Expo，mobile/） | ✅ 代码完成 | **轮询+本地通知架构**（FCM 大陆网络不可用）；待真机联调，iOS 不做 |
+| APNs/FCM 直连推送 | ✅ 代码就绪 | 轮询架构下暂不需要，保留备用 |
+| App HTTP API（本地） | ✅ 完成 | 13 个端点，冒烟 13/13；本地调试用 |
+| **云后端（Worker + KV）** | ✅ 完成 | `cloudflare-worker/`，固定地址 `https://jingliu.ktec0230.de5.net`，全端点实测通过 |
+| **云同步（cloud_sync）** | ✅ 完成 | GH Actions 每轮拉/回 state.db + feed.json，本地→Worker 实测通过 |
+| AI 理由字段（LLM reason） | ✅ 完成 | prompt 已带可选字段；云端暂未配 AI_API_KEY，AI 筛选不生效（关键词/网页监控契约照常） |
+| 安卓端 App（Expo，mobile/） | ✅ v2 改版完成 | Claude 风格 UI + 安全区适配 + 保活弹窗/跳转 + 兴趣编辑屏；APK 待重构建装机 |
 | 摘要池定时推送（Digest） | ✅ 完成 | low 置信度契约攒批，按 interval_minutes 汇总一条推送 |
 
-**测试基线**：`uv run pytest tests/` → 87 passed + 35 subtests；移动端 `cd mobile && npx tsc --noEmit` 通过。
-**端到端冒烟**：`D:\K\zcode\tmp-jingliu-smoke\smoke.py`（推送链路 10/10）、`api_smoke.py`（API 13/13）。
+**测试基线**：`uv run pytest tests/` → 87 passed + 35 subtests（2026-11-15 复验）；移动端 `cd mobile && npx tsc --noEmit` 通过。
+
+**云端架构（2026-11-15 起，手机不再依赖本机）**：
+
+```
+GH Actions crawler.yml（每小时 cron，试用版需每 7 天 Check In 一次）
+  ├─ sync-in:  从 Worker 拉持久 state.db + 兴趣 overlay → 覆盖 config 文件
+  ├─ Run crawler（jingliu.enabled=true，契约构建/监控/门控/落台账）
+  └─ sync-out: state.db 回传 + feed.json（近 100 条契约 + 兴趣快照）上传
+        ↓ 存 Cloudflare KV（namespace "jingliu"，id 2c70e679-…）
+手机 App → https://jingliu.ktec0230.de5.net（Worker：/api/* 读 KV 合并反馈 overlay）
+```
+
+无推送渠道时契约照样落台账（`record_pushed` 空 channel 允许），App 轮询即所见。
 
 ---
 
@@ -35,7 +49,12 @@ trendradar/jingliu/
 ├── __init__.py              # 导出 PushContractBuilder 等
 ├── contracts.py             # 核心：契约构建 + 门控 + 台账（方案交付物 3）
 ├── monitor_scheduler.py     # URL 监控调度：run_due_cycle() 进程启动即扫描
-└── api_server.py            # App REST API（stdlib http.server，零新依赖）
+├── api_server.py            # App REST API（stdlib http.server，零新依赖；本地调试用）
+└── cloud_sync.py            # 云同步：sync-in/sync-out（GH Actions ↔ Worker/KV，stdlib 实现）
+
+cloudflare-worker/          # 云后端（部署: cd cloudflare-worker && npx wrangler deploy）
+├── worker.js                # /api/*（App，Bearer JINGLIU_API_TOKEN）+ /internal/*（GH 同步，Bearer JINGLIU_SYNC_TOKEN）；数据全存 KV
+└── wrangler.toml            # KV 绑定 + 自定义域 jingliu.ktec0230.de5.net；secrets 两个见上
 
 trendradar/collectors/
 ├── webpage_monitor.py       # URL 监控采集器（提取/规范化/diff/噪声掩码）
@@ -64,7 +83,9 @@ trendradar/storage/jingliu_schema.sql   # 6 张表 DDL（sources/push_contracts/
 | `trendradar/storage/{base,local,remote,manager}.py` | 委托方法追加 | 低（纯追加） |
 | `trendradar/ai/filter.py` / `filter_pipeline.py` | reason 字段解析/透传 + title_entry 加 relevance_score/reason | ⚠️ 中 |
 | `trendradar/storage/ai_filter_schema.sql` | 加 reason 列 | ⚠️ 低（上游若改此文件需手动并） |
-| `config/config.yaml` / `config/ai_filter/prompt.txt` | 追加 jingliu 段 / reason 输出格式 | 低 |
+| `config/config.yaml` / `config/ai_filter/prompt.txt` | 追加 jingliu 段（enabled=true）/ reason 输出格式 | 低 |
+| `.github/workflows/crawler.yml` | 插入静流云同步两步（sync-in / sync-out，缺 secrets 自动跳过） | 低（纯插入） |
+| `mobile/` | Expo App（v2：safe-area-context + intent-launcher + vector-icons 三个新原生依赖） | 无冲突（纯新增目录） |
 | `pyproject.toml` | 4 个运行依赖 + pytest dev | 低 |
 | `.gitignore` | 新建（原本没有，__pycache__ 全裸奔） | — |
 
@@ -204,13 +225,26 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 11. **Expo Go 使用边界**：Expo Go（SDK 53+）安卓不支持远程推送，且本地通知渠道 API 在 Go 里可能 NPE——推送/通知相关验证一律用 EAS 构建的 APK；Expo Go 只适合 UI 与 API 联调
 11. **App 与后端同网要求**：Expo Go 调试时手机需能访问后端地址（局域网/公网），http 明文已允许（自部署场景）
 
+### 云架构专属坑（2026-11-15 实测）
+
+12. **CF zone 的 Browser Integrity Check 按 UA 拦截**：`Python-urllib` UA 访问 `*.ktec0230.de5.net` 一律 403/1010（curl、okhttp/ReactNative 均放行）。`cloud_sync.py` 已统一伪装浏览器 UA；手机 App 与 curl 不受影响。**给这个 zone 写任何新脚本都要带浏览器 UA**
+13. **KV 单值上限 25MiB**：state.db（当前 53KB）与 feed.json（16KB）都远小于上限；webpage_diffs 全量块快照会缓慢膨胀，若 state.db 涨到几十 MB 需要清理策略（Worker 会在 PUT 时 413 拒绝）
+14. **KV 最终一致**：写后 ~60 秒内跨边缘读取可能拿旧值——App 每次轮询读到 1 分钟内的旧 feed 属正常
+15. **反馈/兴趣存 overlay 不回写 DB**：手机上的反馈和兴趣编辑只存 KV overlay，管道台账里的 user_feedback 保持空——当前无功能依赖它读 DB（反馈反哺是未来路线）
+16. **fork 的 Actions 要网页激活一次**：API 层面 enabled=true 但 run 会永远停在"pre-queue"（cancel 报 409 not queued yet）——必须在网页 Actions 标签点一次"I understand my workflows, go ahead and enable them"
+17. **试用版 Check-In**：上游 crawler.yml 设计为每 7 天需在 Actions 页手动运行一次 "Check In" 工作流，否则 cron 自动停（推送静默中断）。上游本意是省资源；嫌烦可自行移除该机制（fork 自主）
+18. **workers.dev 裸域名大陆不可达**：必须走自定义域 `jingliu.ktec0230.de5.net`（wrangler deploy 已自动建好 DNS 与证书；重部署时保持 wrangler.toml 里的 routes 段，注意 TOML 顶层键必须在 [[table]] 之前）
+
 ---
 
 ## 8. 路线图（建议顺序）
 
 1. ~~安卓真机联调~~（**已完成 2026-11-14**：dev client 装机、端到端通知验证通过——页面变更→契约→手机弹通知"网页标题从『标题 A』变为『标题 B』"）
-2. **隧道固定地址**（下一步痛点）：trycloudflare 地址每次重启会变，App 里地址要跟着改；升级为命名隧道绑定用户 CF 域名（需 `cloudflared tunnel login` 一次 + 确定子域，如 jingliu.用户域名.com）
-3. **厂商后台限制**：用户手机若为 MIUI/EMUI 等深度定制系统，需把"静流"加入电池优化白名单/自启动名单，否则 WorkManager 后台轮询会被冻结
-4. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要（App 通知流会呈现）
-5. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪）
-6. **上游同步**：见 2.2 冲突点清单；mobile/ 为新增目录无冲突风险
+2. ~~固定地址~~（**已完成 2026-11-15，方案升级**：放弃隧道，整体云化——GH Actions 跑管道 + Worker/KV 固定地址 `https://jingliu.ktec0230.de5.net`，电脑关机不影响手机拉取）
+3. ~~厂商后台限制~~（**已完成 2026-11-15**：App 首启弹窗 + 设置页「后台保活」区，电池优化白名单弹窗直达 + OPPO/vivo/华为/小米自启动跳转逐级兜底）
+4. **App v2 装机验收**（进行中）：EAS 重建 dev client APK（新增 3 个原生依赖）→ 装机 → 固定地址/token 配置 → 真机全功能过一遍（推送流/兴趣编辑/保活跳转/通知）
+5. **fork Actions 激活 + 首轮云跑验证**：网页 Actions 标签点启用 → dispatch 爬虫 workflow → 看 sync-in/sync-out 两步 + 手机拉到新 feed
+6. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要（App 通知流会呈现）
+7. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪；云架构下 overlay 数据在 KV 里可查）
+8. **上游同步**：见 2.2 冲突点清单；mobile/、cloudflare-worker/ 为新增目录无冲突风险
+9. **可选**：配 AI_API_KEY secret 让 AI 筛选生效；嫌弃试用版 Check-In 机制可移除（fork 自主）

@@ -128,3 +128,27 @@ export function sendFeedback(
     body: JSON.stringify({ feedback }),
   });
 }
+
+/** 兴趣文件条目（后端 GET /api/interests 返回结构） */
+export interface InterestFile {
+  path: string;
+  exists: boolean;
+  content: string;
+}
+
+export type InterestTarget = "ai_interests" | "frequency_words";
+
+export function fetchInterests(settings: Settings): Promise<Record<InterestTarget, InterestFile>> {
+  return request(settings, "/interests");
+}
+
+export function saveInterests(
+  settings: Settings,
+  target: InterestTarget,
+  content: string
+): Promise<{ updated: boolean; target: InterestTarget; path: string }> {
+  return request(settings, "/interests", {
+    method: "PUT",
+    body: JSON.stringify({ target, content }),
+  });
+}

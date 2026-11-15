@@ -7,7 +7,13 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.jingliu.app",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK"
+      ]
     },
     "plugins": [
       "expo-notifications",

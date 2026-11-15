@@ -511,7 +511,7 @@ advanced:
 # 抖音源依赖外部 RSSHub 实例（rsshub_base 必填）。
 # ===============================================================
 jingliu:
-  enabled: false                      # 总开关（false 时所有静流逻辑不生效）
+  enabled: true                       # 总开关（云端 GH Actions 跑管道 + 手机 App 轮询 Worker）
   rsshub_base: ""                     # RSSHub 实例地址（如 https://rsshub.example.com），抖音源必填
 
   webpage:                            # URL 监控参数
@@ -534,8 +534,8 @@ jingliu:
     credentials_file: ""              # service account JSON 路径（或环境变量 GOOGLE_APPLICATION_CREDENTIALS）
     device_tokens: ""                 # 设备 token，多个用 ; 分隔（App 动态注册的 token 存 state 库，自动合并）
 
-  expo:                               # Expo App 推送（mobile/ 目录的 App 用，免 Google 凭据）
-    enabled: true                     # 经 Expo 官方服务转发 FCM；App 注册的 ExpoPushToken 自动合并
+  expo:                               # Expo App 推送（保留备用；App 现为轮询+本地通知，不走此通道）
+    enabled: false                    # 云端轮询架构无需远程推送渠道，契约照常落台账供 App 拉取
     device_tokens: ""                 # 可选：手工填 ExpoPushToken，多个用 ; 分隔
 
   api:                                # App HTTP API（python -m trendradar.jingliu.api_server 启动）

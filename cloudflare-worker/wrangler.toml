@@ -1,0 +1,16 @@
+name = "jingliu-api"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+account_id = "e6b30ead6d77503bf917f65907e60c9f"
+
+# 固定地址（workers.dev 裸域名在大陆不可达，必须绑自有域）。
+# 注意：TOML 顶层键必须写在所有 [[table]] 段之前。
+# 若 deploy 时报 DNS 写权限错误：先注释掉 routes 段重新 deploy，再到 CF 后台
+# Workers & Pages → jingliu-api → Settings → Domains & Routes 手动添加该域。
+routes = [
+  { pattern = "jingliu.ktec0230.de5.net", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "2c70e67918a04b0fbe6601086a2e7fea"

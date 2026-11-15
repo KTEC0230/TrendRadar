@@ -133,6 +133,20 @@ jobs:
             exit 1
           fi
 
+      # --------------------------------------------------------------------------------
+      # 📲 静流云同步（拉取）/ JingLiu Cloud Sync In（可选）
+      # --------------------------------------------------------------------------------
+      # 从 Cloudflare Worker/KV 拉取持久 state.db + 兴趣文件 overlay（手机 App 上改过则生效）。
+      # 仅当 JINGLIU_WORKER_URL + JINGLIU_SYNC_TOKEN 两个 Secrets 均已配置时执行（脚本自身
+      # 检测缺省则跳过），配套云端 API 见 cloudflare-worker/。
+      # --------------------------------------------------------------------------------
+      - name: 静流云同步（拉取 state.db + 兴趣 overlay）
+        if: success()
+        env:
+          JINGLIU_WORKER_URL: ${{ secrets.JINGLIU_WORKER_URL }}
+          JINGLIU_SYNC_TOKEN: ${{ secrets.JINGLIU_SYNC_TOKEN }}
+        run: uv run python -m trendradar.jingliu.cloud_sync sync-in
+
       - name: Run crawler
         if: success()
         env:
@@ -168,6 +182,14 @@ jobs:
           S3_REGION: ${{ secrets.S3_REGION }}
           GITHUB_ACTIONS: true
         run: uv run python -m trendradar
+
+      # 📲 静流云同步（回传）：state.db 回 KV 持久化 + 生成 feed.json 供手机 App 拉取
+      - name: 静流云同步（回传 state.db + 上传 feed.json）
+        if: success()
+        env:
+          JINGLIU_WORKER_URL: ${{ secrets.JINGLIU_WORKER_URL }}
+          JINGLIU_SYNC_TOKEN: ${{ secrets.JINGLIU_SYNC_TOKEN }}
+        run: uv run python -m trendradar.jingliu.cloud_sync sync-out
 
       # --------------------------------------------------------------------------------
       # ☁️ CLOUDFLARE PAGES DEPLOY / 部署到 Cloudflare Pages（可选）

@@ -243,7 +243,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 1. ~~安卓真机联调~~（**已完成 2026-11-14**：dev client 装机、端到端通知验证通过——页面变更→契约→手机弹通知"网页标题从『标题 A』变为『标题 B』"）
 2. ~~固定地址~~（**已完成 2026-11-15，方案升级**：放弃隧道，整体云化——GH Actions 跑管道 + Worker/KV 固定地址 `https://jingliu.ktec0230.de5.net`，电脑关机不影响手机拉取）
 3. ~~厂商后台限制~~（**已完成 2026-11-15**：App 首启弹窗 + 设置页「后台保活」区，电池优化白名单弹窗直达 + OPPO/vivo/华为/小米自启动跳转逐级兜底）
-4. **App v2 装机验收**（进行中）：EAS 重建 dev client APK（新增 3 个原生依赖）→ 装机 → 固定地址/token 配置 → 真机全功能过一遍（推送流/兴趣编辑/保活跳转/通知）
+4. **App v2 装机验收**（进行中）：EAS 构建独立版 APK（`--profile preview`，内嵌 JS bundle，脱离电脑独立运行）→ 装机 → 固定地址/token 配置 → 真机全功能过一遍（推送流/兴趣编辑/保活跳转/通知）。⚠️ 两个 profile 别混：`development`=dev client 外壳，必须 PC 开 `expo start` 才能进（联调热重载用）；`preview`=独立版，日常用。11-15 曾误装 development 版致 "Error loading app"
 5. **fork Actions 激活 + 首轮云跑验证**：网页 Actions 标签点启用 → dispatch 爬虫 workflow → 看 sync-in/sync-out 两步 + 手机拉到新 feed
 6. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要（App 通知流会呈现）
 7. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪；云架构下 overlay 数据在 KV 里可查）

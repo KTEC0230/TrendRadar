@@ -84,6 +84,7 @@ trendradar/storage/jingliu_schema.sql   # 6 张表 DDL（sources/push_contracts/
 | `trendradar/ai/filter.py` / `filter_pipeline.py` | reason 字段解析/透传 + title_entry 加 relevance_score/reason | ⚠️ 中 |
 | `trendradar/storage/ai_filter_schema.sql` | 加 reason 列 | ⚠️ 低（上游若改此文件需手动并） |
 | `config/config.yaml` / `config/ai_filter/prompt.txt` | 追加 jingliu 段（enabled=true）/ reason 输出格式 | 低 |
+| `README.md` | 已重写为静流项目定位（上游原版移至 `docs/README-upstream.md`） | ⚠️ 中：上游改 README.md 时同步冲突，一律保留 fork 版，把上游新内容手动并进 docs/README-upstream.md |
 | `.github/workflows/crawler.yml` | 插入静流云同步两步（sync-in / sync-out，缺 secrets 自动跳过） | 低（纯插入） |
 | `mobile/` | Expo App（v2：safe-area-context + intent-launcher + vector-icons 三个新原生依赖） | 无冲突（纯新增目录） |
 | `pyproject.toml` | 4 个运行依赖 + pytest dev | 低 |

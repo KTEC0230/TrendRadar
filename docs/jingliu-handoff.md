@@ -208,9 +208,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 
 ## 8. 路线图（建议顺序）
 
-1. **安卓真机联调**（当前阶段）：EAS 项目已链接（@ktec/jingliu）、FCM 凭据已配置、APK 构建链路已跑通（三轮）→ 手机安装 APK → 设置页填后端地址（trycloudflare）+ token → 测试连接 → 点"开启通知 + 后台刷新" → 后端触发一轮监控验证通知弹出
-2. **隧道固定地址**：trycloudflare 地址每次重启会变（App 地址要跟着改）；升级为命名隧道绑定用户 CF 域名（需 `cloudflared tunnel login` 一次 + 确定子域，如 jingliu.用户域名.com）
-3. **推送节奏优化**：当前后台 ≥15 分钟粒度；可评估 WebSocket 前台服务（即时但需常驻通知栏）或可控网关刷新
+1. ~~安卓真机联调~~（**已完成 2026-11-14**：dev client 装机、端到端通知验证通过——页面变更→契约→手机弹通知"网页标题从『标题 A』变为『标题 B』"）
+2. **隧道固定地址**（下一步痛点）：trycloudflare 地址每次重启会变，App 里地址要跟着改；升级为命名隧道绑定用户 CF 域名（需 `cloudflared tunnel login` 一次 + 确定子域，如 jingliu.用户域名.com）
+3. **厂商后台限制**：用户手机若为 MIUI/EMUI 等深度定制系统，需把"静流"加入电池优化白名单/自启动名单，否则 WorkManager 后台轮询会被冻结
 4. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要（App 通知流会呈现）
 5. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪）
 6. **上游同步**：见 2.2 冲突点清单；mobile/ 为新增目录无冲突风险

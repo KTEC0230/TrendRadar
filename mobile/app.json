@@ -18,7 +18,9 @@
     "plugins": [
       "expo-notifications",
       "expo-status-bar",
-      "expo-background-task"
+      "expo-background-task",
+      "expo-font",
+      ["expo-build-properties", { "android": { "enableMinifyInReleaseBuilds": false } }]
     ],
     "extra": {
       "eas": {

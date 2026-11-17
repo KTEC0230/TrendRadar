@@ -236,6 +236,13 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 17. **试用版 Check-In**：上游 crawler.yml 设计为每 7 天需在 Actions 页手动运行一次 "Check In" 工作流，否则 cron 自动停（推送静默中断）。上游本意是省资源；嫌烦可自行移除该机制（fork 自主）
 18. **workers.dev 裸域名大陆不可达**：必须走自定义域 `jingliu.ktec0230.de5.net`（wrangler deploy 已自动建好 DNS 与证书；重部署时保持 wrangler.toml 里的 routes 段，注意 TOML 顶层键必须在 [[table]] 之前）
 
+### 云化收尾补丁（2026-11-18 实测）
+
+19. **契约分发门控 bug（3acecdb 修复）**：`_has_jingliu_push_configured` 原先要求 APNs/FCM 静态 token，云端轮询架构下热榜/RSS 契约从不生成（网页监控契约走 MonitorScheduler 独立路径才掩盖了它）。现语义：jingliu_enabled 即视为已配置。改 `__main__.py` 时保留「静流：」注释锚
+20. **GH Actions 调度故障**：本仓库所有运行卡 pre-queue（jobs=0、cancel 报 409 not queued yet、rerun 报 already running），`disabled_fork` 已 API 强制 active、workflow 文件改名（crawler.yml→hotnews.yml，新 id 421526100）也无效，GitHub 状态页 operational——疑账号/仓库级调度异常。**兜底已上线**：本机计划任务 `JingLiuPipeline`（schtasks，每小时，SYSTEM 账户跑 start-pipeline.bat：sync-in→管道→sync-out，日志 output/pipeline-cron.log）。撤销命令：`schtasks /delete /tn "JingLiuPipeline" /f`。bat 与 start-api.bat 同为 gitignore 凭据文件
+21. **正式版闪退档案**：①缺 react peer（5474041）②缺 expo-font（fe1ab3d）③**R8 混淆裁掉 expo-device 原生模块**——SDK 58 模板默认 `enableMinifyInReleaseBuilds=true`，已用 expo-build-properties `android.enableMinifyInReleaseBuilds=false` 关闭（daf7632）。诊断手法=下载 EAS APK 解剖 dex 探针 `com/xxx` 斜杠类名（dex 类名是斜杠分隔勿用点号）；2026-11-17 独立版装机验收通过，全部原生模块在包
+22. **本地定时任务的编码坑**：bat 文件禁写中文（cmd 按 GBK 解析 UTF-8 中文注释会把行解析成命令）；HTML 报告自动弹窗用 `GITHUB_ACTIONS=true` 环境变量抑制（上游原生支持，副作用=不使用代理，本机爬取无碍）
+
 ---
 
 ## 8. 路线图（建议顺序）
@@ -243,8 +250,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 1. ~~安卓真机联调~~（**已完成 2026-11-14**：dev client 装机、端到端通知验证通过——页面变更→契约→手机弹通知"网页标题从『标题 A』变为『标题 B』"）
 2. ~~固定地址~~（**已完成 2026-11-15，方案升级**：放弃隧道，整体云化——GH Actions 跑管道 + Worker/KV 固定地址 `https://jingliu.ktec0230.de5.net`，电脑关机不影响手机拉取）
 3. ~~厂商后台限制~~（**已完成 2026-11-15**：App 首启弹窗 + 设置页「后台保活」区，电池优化白名单弹窗直达 + OPPO/vivo/华为/小米自启动跳转逐级兜底）
-4. **App v2 装机验收**（进行中）：EAS 构建独立版 APK（`--profile preview`，内嵌 JS bundle，脱离电脑独立运行）→ 装机 → 固定地址/token 配置 → 真机全功能过一遍（推送流/兴趣编辑/保活跳转/通知）。⚠️ 两个 profile 别混：`development`=dev client 外壳，必须 PC 开 `expo start` 才能进（联调热重载用）；`preview`=独立版，日常用。11-15 曾误装 development 版致 "Error loading app"
-5. **fork Actions 激活 + 首轮云跑验证**：网页 Actions 标签点启用 → dispatch 爬虫 workflow → 看 sync-in/sync-out 两步 + 手机拉到新 feed
+4. ~~App v2 装机验收~~（**完成 2026-11-17**：preview 独立版装机，用户确认主要功能一切正常。三轮排雷：误装 development 版（Error loading app）→ 缺 expo-font → R8 混淆裁 expo-device，见坑 21）
+5. **定时管道**（部分受阻）：GH Actions 调度故障未解（坑 20），**兜底=本机计划任务 JingLiuPipeline 每小时跑**（sync-in→管道→sync-out，2026-11-18 实测 54 条契约入云端）。GH 恢复后撤兜底即回归纯云端
 6. **摘要推送体验**：后端 `jingliu.digest.enabled: true`，观察 low 置信度契约的攒批摘要（App 通知流会呈现）
 7. **反馈反哺**：统计 useless 高发的 interest，提示用户调整兴趣描述（App 端按钮已就绪；云架构下 overlay 数据在 KV 里可查）
 8. **上游同步**：见 2.2 冲突点清单；mobile/、cloudflare-worker/ 为新增目录无冲突风险

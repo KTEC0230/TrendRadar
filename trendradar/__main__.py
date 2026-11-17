@@ -179,13 +179,15 @@ class NewsAnalyzer:
         )
 
     def _has_jingliu_push_configured(self) -> bool:
-        """静流 APNs/FCM 契约渠道是否已配置且可用"""
+        """静流契约渠道是否已配置且可用
+
+        静流：轮询架构（云端 Worker + App 主动拉取）下契约落台账即可见，
+        无需远程推送渠道，故 jingliu_enabled 即视为已配置；
+        APNs/FCM 直连通道（静态 token）保留时同样算已配置。
+        """
         if not self.ctx.jingliu_enabled:
             return False
-        jingliu_config = self.ctx.config.get("JINGLIU", {})
-        apns_ready = jingliu_config.get("APNS", {}).get("ENABLED", False) and jingliu_config.get("APNS", {}).get("DEVICE_TOKENS", "")
-        fcm_ready = jingliu_config.get("FCM", {}).get("ENABLED", False) and jingliu_config.get("FCM", {}).get("DEVICE_TOKENS", "")
-        return bool(apns_ready or fcm_ready)
+        return True
 
     def _has_valid_content(
         self, stats: List[Dict], new_titles: Optional[Dict] = None

@@ -1,23 +1,28 @@
 /**
- * 推送流屏幕：已推送契约列表 + 有用/无用反馈
+ * 推送流屏幕 v3：信息源分组 + 翻页式阅读 + 内置浏览器
  *
- * 卡片走 Claude 风：白底细边框圆角、置信度浅色 pill 徽章、陶土橙反馈高亮。
+ * - 相同信息源（platform_name）聚合成组卡，组序按最新内容时间
+ * - 组卡折叠态显示最新一条摘要；展开后组内横向翻页（滑动=翻书），页脚页码
+ * - 「打开原文链接」走 expo-web-browser（Chrome Custom Tabs 内嵌，不跳出 App）
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Linking,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as WebBrowser from "expo-web-browser";
 
-import { Contract, Settings, fetchRecentContracts as fetchRecent, sendFeedback } from "../api";
+import { Confidence, Contract, Settings, fetchRecentContracts as fetchRecent, sendFeedback } from "../api";
 import { colors, confidenceStyles } from "../theme";
 
 interface FeedScreenProps {
@@ -25,11 +30,203 @@ interface FeedScreenProps {
   refreshToken: number;
 }
 
+interface ContractGroup {
+  key: string;
+  platform: string;
+  items: Contract[];
+}
+
+function groupBySource(contracts: Contract[]): ContractGroup[] {
+  const order: string[] = [];
+  const map = new Map<string, Contract[]>();
+  for (const c of contracts) {
+    const name = c.source_attribution?.platform_name || c.source_attribution?.source_type || "未知来源";
+    if (!map.has(name)) {
+      map.set(name, []);
+      order.push(name);
+    }
+    map.get(name)!.push(c);
+  }
+  return order.map((name) => ({ key: name, platform: name, items: map.get(name)! }));
+}
+
+async function openInBrowser(url: string): Promise<void> {
+  try {
+    await WebBrowser.openBrowserAsync(url, { showTitle: true, enableBarCollapsing: true });
+  } catch {
+    Linking.openURL(url).catch(() => {});
+  }
+}
+
+/** 组内单页：一条契约的完整展示 */
+function ContractPage({
+  item,
+  width,
+  onFeedback,
+  feedbackBusy,
+}: {
+  item: Contract;
+  width: number;
+  onFeedback: (c: Contract, f: "useful" | "useless") => void;
+  feedbackBusy: number | null;
+}) {
+  const conf = confidenceStyles[item.confidence] ?? confidenceStyles.low;
+  const reason = item.hit_reason?.text ?? "";
+  const attribution = item.source_attribution ?? {};
+  const title = item.payload?.title?.trim();
+
+  return (
+    <View style={[styles.page, { width }]}>
+      <View style={styles.pageHeader}>
+        <View style={[styles.badge, { backgroundColor: conf.bg }]}>
+          <Text style={[styles.badgeText, { color: conf.text }]}>{conf.label}</Text>
+        </View>
+        <Text style={styles.meta}>
+          {item.pushed_at ? item.pushed_at.replace("T", " ").slice(0, 16) : ""}
+        </Text>
+      </View>
+      {title ? <Text style={styles.title}>{title}</Text> : null}
+      <Text style={styles.reason}>{reason}</Text>
+      <Text style={styles.interest}>兴趣「{item.interest_id}」</Text>
+      {Boolean(attribution.url) ? (
+        <TouchableOpacity style={styles.linkBtn} onPress={() => openInBrowser(attribution.url)}>
+          <Ionicons name="globe-outline" size={15} color={colors.accentDark} />
+          <Text style={styles.linkText}>内置浏览器阅读原文</Text>
+        </TouchableOpacity>
+      ) : null}
+      <View style={styles.feedbackRow}>
+        <TouchableOpacity
+          style={[styles.feedbackBtn, item.user_feedback === "useful" && styles.feedbackActiveUseful]}
+          disabled={feedbackBusy === item.id}
+          onPress={() => onFeedback(item, "useful")}
+        >
+          <Ionicons
+            name={item.user_feedback === "useful" ? "thumbs-up" : "thumbs-up-outline"}
+            size={13}
+            color={item.user_feedback === "useful" ? colors.success : colors.secondary}
+          />
+          <Text style={[styles.feedbackText, item.user_feedback === "useful" && styles.feedbackTextUseful]}>有用</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.feedbackBtn, item.user_feedback === "useless" && styles.feedbackActiveUseless]}
+          disabled={feedbackBusy === item.id}
+          onPress={() => onFeedback(item, "useless")}
+        >
+          <Ionicons
+            name={item.user_feedback === "useless" ? "thumbs-down" : "thumbs-down-outline"}
+            size={13}
+            color={item.user_feedback === "useless" ? colors.danger : colors.secondary}
+          />
+          <Text style={[styles.feedbackText, item.user_feedback === "useless" && styles.feedbackTextUseless]}>无用</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/** 信息源组卡：折叠摘要 + 展开后横向翻页 */
+function SourceGroupCard({
+  group,
+  expanded,
+  onToggle,
+  onFeedback,
+  feedbackBusy,
+}: {
+  group: ContractGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  onFeedback: (c: Contract, f: "useful" | "useless") => void;
+  feedbackBusy: number | null;
+}) {
+  const pageWidth = Dimensions.get("window").width - 28;
+  const [page, setPage] = useState(0);
+  const latest = group.items[0];
+  const latestTitle = latest ? latest.payload?.title?.trim() || latest.hit_reason?.text || "" : "";
+
+  const onScroll = useCallback((e: { nativeEvent: { contentOffset: { x: number } } }) => {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
+    setPage(Math.max(0, Math.min(idx, group.items.length - 1)));
+  }, [pageWidth, group.items.length]);
+
+  return (
+    <View style={styles.card}>
+      <TouchableOpacity style={styles.groupHeader} onPress={onToggle} activeOpacity={0.7}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{group.platform.slice(0, 1)}</Text>
+        </View>
+        <View style={styles.groupHeaderText}>
+          <Text style={styles.platform}>{group.platform}</Text>
+          {expanded ? (
+            <Text style={styles.groupCount}>{group.items.length} 条</Text>
+          ) : (
+            <Text style={styles.groupSummary} numberOfLines={1}>
+              {latestTitle}
+            </Text>
+          )}
+        </View>
+        <View style={styles.groupBadge}>
+          {!expanded && group.items.length > 1 && <Text style={styles.groupBadgeText}>{group.items.length}</Text>}
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.faint}
+          />
+        </View>
+      </TouchableOpacity>
+
+      {expanded ? (
+        <View>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScroll={(e) => onScroll(e)}
+            scrollEventThrottle={32}
+          >
+            {group.items.map((item) => (
+              <ContractPage
+                key={item.id}
+                item={item}
+                width={pageWidth}
+                onFeedback={onFeedback}
+                feedbackBusy={feedbackBusy}
+              />
+            ))}
+          </ScrollView>
+          {group.items.length > 1 ? (
+            <View style={styles.pageIndicator}>
+              <TouchableOpacity
+                disabled={page === 0}
+                onPress={() => {}}
+                style={[styles.pageArrow, page === 0 && styles.pageArrowDisabled]}
+              >
+                <Ionicons name="chevron-back" size={13} color={colors.faint} />
+              </TouchableOpacity>
+              <Text style={styles.pageText}>
+                {page + 1} / {group.items.length}
+              </Text>
+              <View style={styles.pageDots}>
+                {group.items.slice(0, 8).map((_, i) => (
+                  <View key={i} style={[styles.dot, i === page && styles.dotActive]} />
+                ))}
+              </View>
+              <TouchableOpacity disabled={page >= group.items.length - 1} style={[styles.pageArrow, page >= group.items.length - 1 && styles.pageArrowDisabled]}>
+                <Ionicons name="chevron-forward" size={13} color={colors.faint} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState<number | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,6 +234,13 @@ export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
     try {
       const data = await fetchRecent(settings);
       setContracts(data.contracts);
+      // 首次加载：最新的一组默认展开
+      const groups = groupBySource(data.contracts);
+      setExpandedIds((prev) => {
+        if (prev.size > 0) return prev;
+        const first = groups[0]?.key;
+        return first ? new Set([first]) : new Set();
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -48,6 +252,25 @@ export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const groups = useMemo(() => groupBySource(contracts), [contracts]);
+  const allExpanded = groups.length > 0 && expandedIds.size >= groups.length;
+
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setExpandedIds((prev) => (prev.size >= groups.length ? new Set() : new Set(groups.map((g) => g.key))));
+  }, [groups]);
 
   const onFeedback = useCallback(
     async (contract: Contract, feedback: "useful" | "useless") => {
@@ -66,78 +289,6 @@ export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
     [settings]
   );
 
-  const renderItem = ({ item }: { item: Contract }) => {
-    const reason = item.hit_reason?.text ?? "";
-    const attribution = item.source_attribution ?? {};
-    const hasUrl = Boolean(attribution.url);
-    const conf = confidenceStyles[item.confidence] ?? confidenceStyles.low;
-    const title = item.payload?.title?.trim();
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.platformWrap}>
-            <Ionicons name="pulse-outline" size={13} color={colors.secondary} />
-            <Text style={styles.platform}>{attribution.platform_name || attribution.source_type || "未知来源"}</Text>
-          </View>
-          <View style={[styles.badge, { backgroundColor: conf.bg }]}>
-            <Text style={[styles.badgeText, { color: conf.text }]}>{conf.label}</Text>
-          </View>
-        </View>
-        {title ? <Text style={styles.title}>{title}</Text> : null}
-        <Text style={styles.reason}>{reason}</Text>
-        <Text style={styles.meta}>
-          {item.pushed_at ? item.pushed_at.replace("T", " ").slice(0, 16) : ""} · 兴趣「{item.interest_id}」
-        </Text>
-        {hasUrl && (
-          <Text style={styles.link} onPress={() => Linking.openURL(attribution.url)}>
-            打开原文链接 ↗
-          </Text>
-        )}
-        <View style={styles.feedbackRow}>
-          <TouchableOpacity
-            style={[styles.feedbackBtn, item.user_feedback === "useful" && styles.feedbackActiveUseful]}
-            disabled={feedbackBusy === item.id}
-            onPress={() => onFeedback(item, "useful")}
-          >
-            <Ionicons
-              name={item.user_feedback === "useful" ? "thumbs-up" : "thumbs-up-outline"}
-              size={13}
-              color={item.user_feedback === "useful" ? colors.success : colors.secondary}
-            />
-            <Text
-              style={[
-                styles.feedbackText,
-                item.user_feedback === "useful" && styles.feedbackTextUseful,
-              ]}
-            >
-              有用
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.feedbackBtn, item.user_feedback === "useless" && styles.feedbackActiveUseless]}
-            disabled={feedbackBusy === item.id}
-            onPress={() => onFeedback(item, "useless")}
-          >
-            <Ionicons
-              name={item.user_feedback === "useless" ? "thumbs-down" : "thumbs-down-outline"}
-              size={13}
-              color={item.user_feedback === "useless" ? colors.danger : colors.secondary}
-            />
-            <Text
-              style={[
-                styles.feedbackText,
-                item.user_feedback === "useless" && styles.feedbackTextUseless,
-              ]}
-            >
-              无用
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
   if (loading && contracts.length === 0) {
     return (
       <View style={styles.center}>
@@ -147,31 +298,57 @@ export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
   }
 
   return (
-    <FlatList
-      style={styles.list}
-      contentContainerStyle={styles.listContent}
-      data={contracts}
-      keyExtractor={(item) => String(item.id)}
-      renderItem={renderItem}
-      ListEmptyComponent={
-        <Text style={styles.empty}>{error || "还没有推送记录——先让后端跑一轮吧"}</Text>
-      }
-      refreshControl={
-        <RefreshControl
-          refreshing={loading}
-          onRefresh={load}
-          tintColor={colors.accent}
-          colors={[colors.accent]}
-        />
-      }
-    />
+    <View style={styles.flex1}>
+      {groups.length > 1 ? (
+        <TouchableOpacity style={styles.toggleAll} onPress={toggleAll}>
+          <Text style={styles.toggleAllText}>{allExpanded ? "全部折叠" : "全部展开"}</Text>
+          <Text style={styles.toggleAllCount}>{contracts.length} 条 · {groups.length} 源</Text>
+        </TouchableOpacity>
+      ) : null}
+      <FlatList
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        data={groups}
+        keyExtractor={(g) => g.key}
+        renderItem={({ item }) => (
+          <SourceGroupCard
+            group={item}
+            expanded={expandedIds.has(item.key)}
+            onToggle={() => toggleGroup(item.key)}
+            onFeedback={onFeedback}
+            feedbackBusy={feedbackBusy}
+          />
+        )}
+        ListEmptyComponent={
+          <Text style={styles.empty}>{error || "还没有推送记录——先让后端跑一轮吧"}</Text>
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={loading}
+            onRefresh={load}
+            tintColor={colors.accent}
+            colors={[colors.accent]}
+          />
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  flex1: { flex: 1 },
   list: { flex: 1 },
   listContent: { paddingBottom: 20 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  toggleAll: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+  },
+  toggleAllText: { fontSize: 13, color: colors.accentDark, fontWeight: "600" },
+  toggleAllCount: { fontSize: 12, color: colors.faint },
   card: {
     backgroundColor: colors.surface,
     borderRadius: 14,
@@ -179,17 +356,56 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     marginHorizontal: 14,
     marginTop: 10,
-    padding: 15,
+    padding: 14,
+    overflow: "hidden",
   },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  platformWrap: { flexDirection: "row", alignItems: "center", gap: 5 },
-  platform: { fontSize: 12, color: colors.secondary, fontWeight: "600", letterSpacing: 0.2 },
-  badge: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 },
+  groupHeader: { flexDirection: "row", alignItems: "center" },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 15, fontWeight: "700", color: colors.accentDark },
+  groupHeaderText: { flex: 1, marginLeft: 10, marginRight: 6 },
+  platform: { fontSize: 14, fontWeight: "700", color: colors.text },
+  groupSummary: { fontSize: 12, color: colors.secondary, marginTop: 2 },
+  groupCount: { fontSize: 12, color: colors.faint, marginTop: 2 },
+  groupBadge: { flexDirection: "row", alignItems: "center", gap: 6 },
+  groupBadgeText: {
+    backgroundColor: colors.accentSoft,
+    color: colors.accentDark,
+    fontSize: 12,
+    fontWeight: "700",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    overflow: "hidden",
+  },
+  page: { paddingHorizontal: 4, paddingTop: 12, paddingBottom: 6 },
+  pageHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  badge: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3, alignSelf: "flex-start" },
   badgeText: { fontSize: 11, fontWeight: "600" },
+  meta: { fontSize: 11, color: colors.faint },
   title: { fontSize: 15, fontWeight: "700", color: colors.text, marginTop: 9, lineHeight: 21 },
   reason: { fontSize: 14, lineHeight: 20, marginTop: 6, color: colors.secondary },
-  meta: { fontSize: 12, color: colors.faint, marginTop: 8 },
-  link: { fontSize: 13, color: colors.accentDark, marginTop: 8, fontWeight: "500" },
+  interest: { fontSize: 12, color: colors.faint, marginTop: 8 },
+  linkBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: 10,
+  },
+  linkText: { fontSize: 13, color: colors.accentDark, fontWeight: "600" },
   feedbackRow: { flexDirection: "row", gap: 8, marginTop: 12 },
   feedbackBtn: {
     flexDirection: "row",
@@ -206,5 +422,19 @@ const styles = StyleSheet.create({
   feedbackText: { fontSize: 13, color: colors.secondary },
   feedbackTextUseful: { color: colors.success, fontWeight: "600" },
   feedbackTextUseless: { color: colors.danger, fontWeight: "600" },
+  pageIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingTop: 4,
+    paddingBottom: 2,
+  },
+  pageArrow: { paddingHorizontal: 4 },
+  pageArrowDisabled: { opacity: 0.3 },
+  pageText: { fontSize: 12, color: colors.secondary, fontWeight: "600", minWidth: 40, textAlign: "center" },
+  pageDots: { flexDirection: "row", gap: 4, alignItems: "center" },
+  dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },
+  dotActive: { backgroundColor: colors.accent },
   empty: { textAlign: "center", marginTop: 60, color: colors.faint, paddingHorizontal: 20, lineHeight: 22 },
 });

@@ -2,12 +2,17 @@
   "expo": {
     "name": "静流",
     "slug": "jingliu",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
     "android": {
       "package": "com.jingliu.app",
       "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FAF9F5"
+      },
       "permissions": [
         "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "POST_NOTIFICATIONS",
@@ -20,7 +25,24 @@
       "expo-status-bar",
       "expo-background-task",
       "expo-font",
-      ["expo-build-properties", { "android": { "enableMinifyInReleaseBuilds": false } }]
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": false
+          }
+        }
+      ],
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FAF9F5"
+        }
+      ]
     ],
     "extra": {
       "eas": {

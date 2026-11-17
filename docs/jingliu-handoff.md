@@ -242,6 +242,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/contracts/123/feedback" -d '{"f
 20. **GH Actions 调度故障**：本仓库所有运行卡 pre-queue（jobs=0、cancel 报 409 not queued yet、rerun 报 already running），`disabled_fork` 已 API 强制 active、workflow 文件改名（crawler.yml→hotnews.yml，新 id 421526100）也无效，GitHub 状态页 operational——疑账号/仓库级调度异常。**兜底已上线**：本机计划任务 `JingLiuPipeline`（schtasks，每小时，SYSTEM 账户跑 start-pipeline.bat：sync-in→管道→sync-out，日志 output/pipeline-cron.log）。撤销命令：`schtasks /delete /tn "JingLiuPipeline" /f`。bat 与 start-api.bat 同为 gitignore 凭据文件
 21. **正式版闪退档案**：①缺 react peer（5474041）②缺 expo-font（fe1ab3d）③**R8 混淆裁掉 expo-device 原生模块**——SDK 58 模板默认 `enableMinifyInReleaseBuilds=true`，已用 expo-build-properties `android.enableMinifyInReleaseBuilds=false` 关闭（daf7632）。诊断手法=下载 EAS APK 解剖 dex 探针 `com/xxx` 斜杠类名（dex 类名是斜杠分隔勿用点号）；2026-11-17 独立版装机验收通过，全部原生模块在包
 22. **本地定时任务的编码坑**：bat 文件禁写中文（cmd 按 GBK 解析 UTF-8 中文注释会把行解析成命令）；HTML 报告自动弹窗用 `GITHUB_ACTIONS=true` 环境变量抑制（上游原生支持，副作用=不使用代理，本机爬取无碍）
+23. **App v3（2026-11-18）**：①图标=PIL 程序绘制（生成脚本 D:\K\zcode\gen_icon.py，超采样贝塞尔水滴；dex 排查教训：dex 类名是 `com/xxx` 斜杠格式）②FeedScreen 信息源分组+横向翻页（platform_name 聚合组卡）③链接走 expo-web-browser（Custom Tabs）。④SDK 58 顶层 `splash` 字段已废弃，启动屏归 expo-splash-screen 插件管：bat 文件禁写中文（cmd 按 GBK 解析 UTF-8 中文注释会把行解析成命令）；HTML 报告自动弹窗用 `GITHUB_ACTIONS=true` 环境变量抑制（上游原生支持，副作用=不使用代理，本机爬取无碍）
 
 ---
 

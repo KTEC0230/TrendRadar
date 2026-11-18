@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppState,
+  BackHandler,
   Modal,
   Pressable,
   StyleSheet,
@@ -18,6 +19,7 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
+import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { Settings } from "./src/api";
@@ -56,7 +58,12 @@ function Shell() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [batteryPrompt, setBatteryPrompt] = useState(false);
   const settingsRef = useRef(settings);
+  const tabRef = useRef<Tab>("feed");
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
 
   useEffect(() => {
     loadSettings().then((loaded) => {
@@ -86,13 +93,30 @@ function Shell() {
     };
 
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") pull();
+      if (state === "active") {
+        pull();
+        // Custom Tabs 预热：点原文秒开
+        WebBrowser.warmUpAsync().catch(() => {});
+      } else {
+        WebBrowser.coolDownAsync().catch(() => {});
+      }
     });
     pull();
+    WebBrowser.warmUpAsync().catch(() => {});
     const timer = setInterval(pull, FOREGROUND_POLL_MS);
+
+    // 安卓返回键：非推送流 Tab 先回推送流，推送流再按才退出
+    const backSubscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (tabRef.current !== "feed") {
+        setTab("feed");
+        return true;
+      }
+      return false;
+    });
 
     return () => {
       subscription.remove();
+      backSubscription.remove();
       clearInterval(timer);
     };
   }, [ready]);

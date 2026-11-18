@@ -4,11 +4,11 @@
  * - 相同信息源（platform_name）聚合成组卡，组序按最新内容时间
  * - 组卡折叠态显示最新一条摘要；展开后组内横向翻页（滑动=翻书），页脚页码
  * - 「打开原文链接」走 expo-web-browser（Chrome Custom Tabs 内嵌，不跳出 App）
+ * - v0.4.1：组卡外壳/加载态抽到 components/，重卡片 memo 化
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   RefreshControl,
   ScrollView,
@@ -19,9 +19,11 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { Confidence, Contract, Settings, fetchRecentContracts as fetchRecent, sendFeedback } from "../api";
+import { Contract, Settings, fetchRecentContracts as fetchRecent, sendFeedback } from "../api";
 import { colors, confidenceStyles } from "../theme";
 import { openInBrowser } from "../browser";
+import { CenterLoading } from "../components/CenterLoading";
+import { GroupCardShell } from "../components/GroupCardShell";
 
 interface FeedScreenProps {
   settings: Settings;
@@ -49,7 +51,7 @@ function groupBySource(contracts: Contract[]): ContractGroup[] {
 }
 
 /** 组内单页：一条契约的完整展示 */
-function ContractPage({
+const ContractPage = memo(function ContractPage({
   item,
   width,
   onFeedback,
@@ -112,10 +114,10 @@ function ContractPage({
       </View>
     </View>
   );
-}
+});
 
 /** 信息源组卡：折叠摘要 + 展开后横向翻页 */
-function SourceGroupCard({
+const SourceGroupCard = memo(function SourceGroupCard({
   group,
   expanded,
   onToggle,
@@ -140,79 +142,55 @@ function SourceGroupCard({
   }, [pageWidth, group.items.length]);
 
   return (
-    <View style={styles.card}>
-      <TouchableOpacity style={styles.groupHeader} onPress={onToggle} activeOpacity={0.7}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{group.platform.slice(0, 1)}</Text>
-        </View>
-        <View style={styles.groupHeaderText}>
-          <Text style={styles.platform}>{group.platform}</Text>
-          {expanded ? (
-            <Text style={styles.groupCount}>{group.items.length} 条</Text>
-          ) : (
-            <Text style={styles.groupSummary} numberOfLines={1}>
-              {latestTitle}
-            </Text>
-          )}
-        </View>
-        <View style={styles.groupBadge}>
-          {!expanded && group.items.length > 1 && <Text style={styles.groupBadgeText}>{group.items.length}</Text>}
-          <Ionicons
-            name={expanded ? "chevron-up" : "chevron-down"}
-            size={16}
-            color={colors.faint}
-          />
-        </View>
-      </TouchableOpacity>
-
-      {expanded ? (
-        <View onLayout={(e) => setPageWidth(e.nativeEvent.layout.width)}>
-          {pageWidth > 0 ? (
-            <ScrollView
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              onScroll={(e) => onScroll(e)}
-              scrollEventThrottle={32}
-            >
-              {group.items.map((item) => (
-                <ContractPage
-                  key={item.id}
-                  item={item}
-                  width={pageWidth}
-                  onFeedback={onFeedback}
-                  feedbackBusy={feedbackBusy}
-                />
-              ))}
-            </ScrollView>
-          ) : null}
-          {group.items.length > 1 && pageWidth > 0 ? (
-            <View style={styles.pageIndicator}>
-              <TouchableOpacity
-                disabled={page === 0}
-                onPress={() => {}}
-                style={[styles.pageArrow, page === 0 && styles.pageArrowDisabled]}
-              >
-                <Ionicons name="chevron-back" size={13} color={colors.faint} />
-              </TouchableOpacity>
-              <Text style={styles.pageText}>
-                {page + 1} / {group.items.length}
-              </Text>
-              <View style={styles.pageDots}>
-                {group.items.slice(0, 8).map((_, i) => (
-                  <View key={i} style={[styles.dot, i === page && styles.dotActive]} />
-                ))}
-              </View>
-              <TouchableOpacity disabled={page >= group.items.length - 1} style={[styles.pageArrow, page >= group.items.length - 1 && styles.pageArrowDisabled]}>
-                <Ionicons name="chevron-forward" size={13} color={colors.faint} />
-              </TouchableOpacity>
+    <GroupCardShell
+      platform={group.platform}
+      expanded={expanded}
+      onToggle={onToggle}
+      badgeCount={group.items.length}
+      summary={latestTitle}
+    >
+      <View onLayout={(e) => setPageWidth(e.nativeEvent.layout.width)}>
+        {pageWidth > 0 ? (
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScroll={(e) => onScroll(e)}
+            scrollEventThrottle={32}
+          >
+            {group.items.map((item) => (
+              <ContractPage
+                key={item.id}
+                item={item}
+                width={pageWidth}
+                onFeedback={onFeedback}
+                feedbackBusy={feedbackBusy}
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+        {group.items.length > 1 && pageWidth > 0 ? (
+          <View style={styles.pageIndicator}>
+            <View style={[styles.pageArrow, page === 0 && styles.pageArrowDisabled]}>
+              <Ionicons name="chevron-back" size={13} color={colors.faint} />
             </View>
-          ) : null}
-        </View>
-      ) : null}
-    </View>
+            <Text style={styles.pageText}>
+              {page + 1} / {group.items.length}
+            </Text>
+            <View style={styles.pageDots}>
+              {group.items.slice(0, 8).map((_, i) => (
+                <View key={i} style={[styles.dot, i === page && styles.dotActive]} />
+              ))}
+            </View>
+            <View style={[styles.pageArrow, page >= group.items.length - 1 && styles.pageArrowDisabled]}>
+              <Ionicons name="chevron-forward" size={13} color={colors.faint} />
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </GroupCardShell>
   );
-}
+});
 
 export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -282,36 +260,40 @@ export function FeedScreen({ settings, refreshToken }: FeedScreenProps) {
     [settings]
   );
 
+  const renderGroup = useCallback(
+    ({ item }: { item: ContractGroup }) => (
+      <SourceGroupCard
+        group={item}
+        expanded={expandedIds.has(item.key)}
+        onToggle={() => toggleGroup(item.key)}
+        onFeedback={onFeedback}
+        feedbackBusy={feedbackBusy}
+      />
+    ),
+    [expandedIds, toggleGroup, onFeedback, feedbackBusy]
+  );
+
   if (loading && contracts.length === 0) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
+    return <CenterLoading />;
   }
 
   return (
     <View style={styles.flex1}>
       {groups.length > 1 ? (
-        <TouchableOpacity style={styles.toggleAll} onPress={toggleAll}>
-          <Text style={styles.toggleAllText}>{allExpanded ? "全部折叠" : "全部展开"}</Text>
+        <View style={styles.toggleAll}>
+          <TouchableOpacity onPress={toggleAll} hitSlop={{ top: 6, bottom: 6 }}>
+            <Text style={styles.toggleAllText}>{allExpanded ? "全部折叠" : "全部展开"}</Text>
+          </TouchableOpacity>
           <Text style={styles.toggleAllCount}>{contracts.length} 条 · {groups.length} 源</Text>
-        </TouchableOpacity>
+        </View>
       ) : null}
       <FlatList
         style={styles.list}
         contentContainerStyle={styles.listContent}
         data={groups}
         keyExtractor={(g) => g.key}
-        renderItem={({ item }) => (
-          <SourceGroupCard
-            group={item}
-            expanded={expandedIds.has(item.key)}
-            onToggle={() => toggleGroup(item.key)}
-            onFeedback={onFeedback}
-            feedbackBusy={feedbackBusy}
-          />
-        )}
+        renderItem={renderGroup}
+        removeClippedSubviews
         ListEmptyComponent={
           <Text style={styles.empty}>{error || "还没有推送记录——先让后端跑一轮吧"}</Text>
         }
@@ -332,7 +314,6 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   list: { flex: 1 },
   listContent: { paddingBottom: 20 },
-  center: { flex: 1, justifyContent: "center", alignItems: "center" },
   toggleAll: {
     flexDirection: "row",
     alignItems: "center",
@@ -342,41 +323,6 @@ const styles = StyleSheet.create({
   },
   toggleAllText: { fontSize: 13, color: colors.accentDark, fontWeight: "600" },
   toggleAllCount: { fontSize: 12, color: colors.faint },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    marginHorizontal: 14,
-    marginTop: 10,
-    padding: 14,
-    overflow: "hidden",
-  },
-  groupHeader: { flexDirection: "row", alignItems: "center" },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: colors.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { fontSize: 15, fontWeight: "700", color: colors.accentDark },
-  groupHeaderText: { flex: 1, marginLeft: 10, marginRight: 6 },
-  platform: { fontSize: 14, fontWeight: "700", color: colors.text },
-  groupSummary: { fontSize: 12, color: colors.secondary, marginTop: 2 },
-  groupCount: { fontSize: 12, color: colors.faint, marginTop: 2 },
-  groupBadge: { flexDirection: "row", alignItems: "center", gap: 6 },
-  groupBadgeText: {
-    backgroundColor: colors.accentSoft,
-    color: colors.accentDark,
-    fontSize: 12,
-    fontWeight: "700",
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    overflow: "hidden",
-  },
   page: { paddingHorizontal: 4, paddingTop: 12, paddingBottom: 6 },
   pageHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   badge: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3, alignSelf: "flex-start" },

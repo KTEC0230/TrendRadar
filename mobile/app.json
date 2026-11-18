@@ -2,7 +2,7 @@
   "expo": {
     "name": "静流",
     "slug": "jingliu",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",

@@ -11,7 +11,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -29,46 +28,11 @@ import {
   Settings,
 } from "../api";
 import { colors } from "../theme";
+import { CenterLoading } from "../components/CenterLoading";
+import { ToggleRow } from "../components/ToggleRow";
 
 interface SourcesScreenProps {
   settings: Settings;
-}
-
-function ToggleRow({
-  title,
-  subtitle,
-  value,
-  onChange,
-  right,
-}: {
-  title: string;
-  subtitle?: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-  right?: React.ReactNode;
-}) {
-  return (
-    <View style={styles.row}>
-      <View style={styles.rowTextWrap}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        {subtitle ? (
-          <Text style={styles.rowSubtitle} numberOfLines={1}>
-            {subtitle}
-          </Text>
-        ) : null}
-      </View>
-      {right}
-      <TouchableOpacity
-        style={[styles.switchOuter, value && styles.switchOuterOn]}
-        onPress={() => onChange(!value)}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <View style={[styles.switchKnob, value && styles.switchKnobOn]} />
-      </TouchableOpacity>
-    </View>
-  );
 }
 
 export function SourcesScreen({ settings }: SourcesScreenProps) {
@@ -164,11 +128,7 @@ export function SourcesScreen({ settings }: SourcesScreenProps) {
   };
 
   if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
+    return <CenterLoading />;
   }
 
   const enabledCount = (n: number, disabledCount: number) => `${n - disabledCount} 开 / ${disabledCount} 关`;

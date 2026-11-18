@@ -149,6 +149,38 @@ export function fetchHotlist(settings: Settings): Promise<{ date: string; platfo
   return request(settings, "/hotlist");
 }
 
+/** 信息源目录（管道导出的内置全集）+ overlay（App 端差异） */
+export interface SourceCatalogPlatform {
+  id: string;
+  name: string;
+}
+
+export interface SourceCatalogFeed {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+
+export interface SourceOverlay {
+  disabled_platform_ids: string[];
+  disabled_feed_ids: string[];
+  extra_feeds: { id: string; name: string; url: string }[];
+}
+
+export function fetchSourcesConfig(
+  settings: Settings
+): Promise<{ catalog: { platforms: SourceCatalogPlatform[]; feeds: SourceCatalogFeed[] }; overlay: SourceOverlay }> {
+  return request(settings, "/sources-config");
+}
+
+export function saveSourcesConfig(settings: Settings, overlay: SourceOverlay): Promise<{ updated: boolean }> {
+  return request(settings, "/sources-config", {
+    method: "PUT",
+    body: JSON.stringify(overlay),
+  });
+}
+
 /** 兴趣文件条目（后端 GET /api/interests 返回结构） */
 export interface InterestFile {
   path: string;

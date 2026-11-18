@@ -18,6 +18,7 @@
 const KEY_STATE_DB = "state.db";
 const KEY_FEED = "feed.json";
 const KEY_FEEDBACK = "feedback";
+const KEY_SOURCES_CONFIG = "sources_config.json";
 const KEY_INTERESTS = (t) => `interests:${t}`;
 
 const INTEREST_TARGETS = ["ai_interests", "frequency_words"];
@@ -93,6 +94,43 @@ async function handleAppApi(request, url, env) {
     return new Response(report, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });
+  }
+
+  // ---- 信息源管理（App 源管理屏；overlay 单一真源，下一轮管道生效） ----
+  if (method === "GET" && path === "/api/sources-config") {
+    const feedRaw = await env.KV.get(KEY_FEED);
+    const feed = feedRaw ? JSON.parse(feedRaw) : {};
+    const overlayRaw = await env.KV.get(KEY_SOURCES_CONFIG);
+    let overlay = { disabled_platform_ids: [], disabled_feed_ids: [], extra_feeds: [] };
+    if (overlayRaw) {
+      try {
+        const parsed = JSON.parse(overlayRaw);
+        if (parsed && typeof parsed === "object") overlay = { ...overlay, ...parsed };
+      } catch {}
+    }
+    return json({
+      catalog: feed.sources_catalog || { platforms: [], feeds: [] },
+      overlay,
+    });
+  }
+  if (method === "PUT" && path === "/api/sources-config") {
+    const body = await readJson(request, 256 * 1024);
+    if (!body || typeof body !== "object") return json({ error: "请求体必须是 JSON 对象" }, 400);
+    const clean = {
+      disabled_platform_ids: Array.isArray(body.disabled_platform_ids) ? body.disabled_platform_ids.map(String) : [],
+      disabled_feed_ids: Array.isArray(body.disabled_feed_ids) ? body.disabled_feed_ids.map(String) : [],
+      extra_feeds: Array.isArray(body.extra_feeds)
+        ? body.extra_feeds
+            .filter((f) => f && typeof f === "object" && typeof f.url === "string" && f.url.trim())
+            .map((f) => ({
+              id: String(f.id || "").trim() || `custom-${Date.now()}`,
+              name: String(f.name || "").trim() || "自定义源",
+              url: String(f.url).trim(),
+            }))
+        : [],
+    };
+    await env.KV.put(KEY_SOURCES_CONFIG, JSON.stringify(clean));
+    return json({ updated: true, overlay: clean });
   }
 
   if (!checkAuth(request, token)) return unauthorized();
@@ -228,6 +266,13 @@ async function handleInternalApi(request, url, env) {
     }
     await env.KV.put("report.html", body);
     return json({ ok: true, size: new TextEncoder().encode(body).length });
+  }
+
+  // ---- 信息源 overlay（sync-in 拉取用；无 overlay → 404，管道恢复默认） ----
+  if (method === "GET" && path === "/internal/sources-config") {
+    const overlay = await env.KV.get(KEY_SOURCES_CONFIG);
+    if (!overlay) return json({ error: "无信息源 overlay" }, 404);
+    return new Response(overlay, { headers: JSON_HEADERS });
   }
 
   // ---- 兴趣 overlay（sync-in 拉取用；无 overlay 时返回 null 让管道用仓库配置） ----

@@ -5,6 +5,7 @@
 负责从 YAML 配置文件和环境变量加载配置。
 """
 
+import json
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -210,6 +211,52 @@ def _load_rss_config(config_data: Dict) -> Dict:
             "MAX_AGE_DAYS": max_age_days,
         },
     }
+
+
+def _apply_jingliu_sources_overlay(config: Dict) -> Dict:
+    """静流：应用 App 端信息源 overlay（output/state/sources_config.json）。
+
+    overlay 由 App 源管理屏经云端 Worker 写入、cloud_sync sync-in 落到本地：
+    - disabled_platform_ids: 停用的热榜平台 id 集合
+    - disabled_feed_ids: 停用的 RSS 订阅 id 集合
+    - extra_feeds: 自定义 RSS [{id, name, url}]
+
+    文件不存在/损坏时静默跳过，保持 config.yaml 原样（overlay 不回写配置文件）。
+    """
+    overlay_path = Path("output/state/sources_config.json")
+    if not overlay_path.exists():
+        return config
+    try:
+        overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[静流] 信息源 overlay 解析失败，忽略: {e}")
+        return config
+    if not isinstance(overlay, dict):
+        return config
+
+    disabled_platforms = set(overlay.get("disabled_platform_ids") or [])
+    if disabled_platforms:
+        before = len(config["PLATFORMS"])
+        config["PLATFORMS"] = [p for p in config["PLATFORMS"] if p.get("id") not in disabled_platforms]
+        print(f"[静流] 信息源 overlay：停用 {before - len(config['PLATFORMS'])} 个热榜平台")
+
+    disabled_feeds = set(overlay.get("disabled_feed_ids") or [])
+    extra_feeds = overlay.get("extra_feeds") or []
+    if disabled_feeds or extra_feeds:
+        feeds = list(config["RSS"].get("FEEDS", []))
+        before = len(feeds)
+        feeds = [f for f in feeds if f.get("id") not in disabled_feeds]
+        existing = {f.get("id") for f in feeds}
+        added = 0
+        for f in extra_feeds:
+            fid, furl = f.get("id"), f.get("url", "")
+            if fid and furl and fid not in existing:
+                feeds.append({"id": fid, "name": f.get("name") or fid, "url": furl, "enabled": True})
+                existing.add(fid)
+                added += 1
+        config["RSS"]["FEEDS"] = feeds
+        print(f"[静流] 信息源 overlay：RSS 停用 {before - (len(feeds) - added)} 个、注入 {added} 个自定义源")
+    return config
 
 
 def _load_jingliu_config(config_data: Dict) -> Dict:
@@ -637,6 +684,9 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     # RSS 配置
     config["RSS"] = _load_rss_config(config_data)
+
+    # 静流：应用信息源 overlay（App 端管理热榜平台开关与 RSS 订阅）
+    config = _apply_jingliu_sources_overlay(config)
 
     # AI 模型共享配置
     config["AI"] = _load_ai_config(config_data)

@@ -102,6 +102,17 @@ def sync_in() -> None:
             path.write_text(content, encoding="utf-8")
             print(f"[静流云同步] 兴趣 overlay 已写入 {rel_path}")
 
+    # 3) 信息源 overlay（App 源管理屏写入 → loader 在本轮管道应用）
+    raw = _request("GET", f"{url}/internal/sources-config", token)
+    overlay_path = Path("output/state/sources_config.json")
+    if raw:
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_path.write_bytes(raw)
+        print("[静流云同步] 信息源 overlay 已写入")
+    elif overlay_path.exists():
+        overlay_path.unlink()
+        print("[静流云同步] 云端无信息源 overlay，已移除本地文件")
+
 
 def _build_feed() -> dict:
     """复用本地 API 同一序列化路径，保证 feed.json 与 /api/contracts/recent 结构一致。"""
@@ -122,13 +133,50 @@ def _build_feed() -> dict:
     for target, rel_path in INTEREST_FILES.items():
         path = Path(rel_path)
         interests[target] = path.read_text(encoding="utf-8") if path.exists() else ""
-    return {"contracts": contracts, "interests": interests, "hotlist": _build_hotlist(data_dir)}
+    return {
+        "contracts": contracts,
+        "interests": interests,
+        "hotlist": _build_hotlist(data_dir),
+        "sources_catalog": _build_sources_catalog(),
+    }
+
+
+def _build_sources_catalog() -> dict:
+    """信息源目录（App 源管理屏显示全集）：直接读 config.yaml 原始小写结构。
+
+    注意勿用 load_config()（大写键展开 dict，dump 会丢结构）。
+    """
+    try:
+        import yaml
+
+        with open("config/config.yaml", encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+        platforms = [
+            {"id": p.get("id"), "name": p.get("name") or p.get("id")}
+            for p in (raw.get("platforms", {}).get("sources") or [])
+            if p.get("enabled", True) and p.get("id")
+        ]
+        feeds = [
+            {
+                "id": f.get("id"),
+                "name": f.get("name") or f.get("id"),
+                "url": f.get("url", ""),
+                "enabled": bool(f.get("enabled", True)),
+            }
+            for f in (raw.get("rss", {}).get("feeds") or [])
+            if f.get("id")
+        ]
+        return {"platforms": platforms, "feeds": feeds}
+    except Exception as e:
+        print(f"[静流云同步] sources_catalog 读取失败: {e}")
+        return {"platforms": [], "feeds": []}
 
 
 def _build_hotlist(data_dir: str) -> dict:
     """当天热榜快照：全平台 + 排名趋势（rank_history 最早 vs 最新排名）。
 
-    数据源 output/news/{date}.db（取最新一份）；无数据时返回空壳，App 端显示空态。
+    数据源 output/news/{date}.db（取最新一份）；被信息源 overlay 停用的平台不导出
+    （与管道行为一致）；无数据时返回空壳，App 端显示空态。
     """
     news_dir = Path(data_dir) / "news"
     if not news_dir.exists():
@@ -139,6 +187,16 @@ def _build_hotlist(data_dir: str) -> dict:
     db_path = db_files[0]
     date = db_path.stem
 
+    # 与管道保持一致：排除 App 端停用的平台
+    disabled = set()
+    overlay_path = Path("output/state/sources_config.json")
+    if overlay_path.exists():
+        try:
+            overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+            disabled = set(overlay.get("disabled_platform_ids") or [])
+        except Exception:
+            pass
+
     import sqlite3
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -147,6 +205,8 @@ def _build_hotlist(data_dir: str) -> dict:
         for pid, pname in conn.execute(
             "SELECT id, name FROM platforms WHERE is_active = 1 ORDER BY id"
         ):
+            if pid in disabled:
+                continue
             items = []
             for rank, title, url, mobile_url, first_rank, cnt in conn.execute(
                 """

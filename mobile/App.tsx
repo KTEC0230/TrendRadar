@@ -27,10 +27,11 @@ import { openAutostartSettings, openBatteryWhitelist } from "./src/keepalive";
 import { colors } from "./src/theme";
 import { FeedScreen } from "./src/screens/FeedScreen";
 import { HotlistScreen } from "./src/screens/HotlistScreen";
+import { SourcesScreen } from "./src/screens/SourcesScreen";
 import { InterestsScreen } from "./src/screens/InterestsScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 
-type Tab = "feed" | "hotlist" | "interests" | "settings";
+type Tab = "feed" | "hotlist" | "sources" | "interests" | "settings";
 
 const FOREGROUND_POLL_MS = 30 * 1000;
 const BATTERY_PROMPT_KEY = "jingliu_battery_prompt_v1";
@@ -38,6 +39,7 @@ const BATTERY_PROMPT_KEY = "jingliu_battery_prompt_v1";
 const TABS: { key: Tab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: "feed", label: "推送流", icon: "newspaper-outline" },
   { key: "hotlist", label: "热榜", icon: "flame-outline" },
+  { key: "sources", label: "源", icon: "list-outline" },
   { key: "interests", label: "兴趣", icon: "sparkles-outline" },
   { key: "settings", label: "设置", icon: "settings-outline" },
 ];
@@ -130,6 +132,8 @@ function Shell() {
           <FeedScreen settings={settings} refreshToken={refreshToken} />
         ) : tab === "hotlist" ? (
           <HotlistScreen settings={settings} />
+        ) : tab === "sources" ? (
+          <SourcesScreen settings={settings} />
         ) : tab === "interests" ? (
           <InterestsScreen settings={settings} />
         ) : (

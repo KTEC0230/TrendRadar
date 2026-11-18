@@ -84,7 +84,25 @@ async function handleAppApi(request, url, env) {
     return json({ status: "ok", backend: "worker-kv" });
   }
 
+  // HTML 报告：Custom Tabs 无法带请求头，用 query token 校验（值=App token）
+  if (method === "GET" && path === "/api/report") {
+    const qtoken = url.searchParams.get("token") || "";
+    if (!safeEqual(qtoken, token)) return unauthorized();
+    const report = await env.KV.get("report.html");
+    if (!report) return json({ error: "云端暂无报告" }, 404);
+    return new Response(report, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
   if (!checkAuth(request, token)) return unauthorized();
+
+  // ---- 今日热榜 ----
+  if (method === "GET" && path === "/api/hotlist") {
+    const feedRaw = await env.KV.get(KEY_FEED);
+    const feed = feedRaw ? JSON.parse(feedRaw) : {};
+    return json(feed.hotlist || { date: "", platforms: [] });
+  }
 
   // ---- 推送流 ----
   if (method === "GET" && path === "/api/contracts/recent") {
@@ -200,6 +218,16 @@ async function handleInternalApi(request, url, env) {
     }
     await env.KV.put(KEY_FEEDBACK, JSON.stringify(pruned));
     return json({ ok: true, contracts: feed.contracts.length });
+  }
+
+  // ---- HTML 报告上传（App 内置浏览器查看） ----
+  if (method === "PUT" && path === "/internal/report.html") {
+    const body = await request.text();
+    if (new TextEncoder().encode(body).length > KV_VALUE_LIMIT) {
+      return json({ error: "report.html 超过 KV 单值上限" }, 413);
+    }
+    await env.KV.put("report.html", body);
+    return json({ ok: true, size: new TextEncoder().encode(body).length });
   }
 
   // ---- 兴趣 overlay（sync-in 拉取用；无 overlay 时返回 null 让管道用仓库配置） ----

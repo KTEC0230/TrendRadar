@@ -122,7 +122,82 @@ def _build_feed() -> dict:
     for target, rel_path in INTEREST_FILES.items():
         path = Path(rel_path)
         interests[target] = path.read_text(encoding="utf-8") if path.exists() else ""
-    return {"contracts": contracts, "interests": interests}
+    return {"contracts": contracts, "interests": interests, "hotlist": _build_hotlist(data_dir)}
+
+
+def _build_hotlist(data_dir: str) -> dict:
+    """当天热榜快照：全平台 + 排名趋势（rank_history 最早 vs 最新排名）。
+
+    数据源 output/news/{date}.db（取最新一份）；无数据时返回空壳，App 端显示空态。
+    """
+    news_dir = Path(data_dir) / "news"
+    if not news_dir.exists():
+        return {"date": "", "platforms": []}
+    db_files = sorted(news_dir.glob("*.db"), reverse=True)
+    if not db_files:
+        return {"date": "", "platforms": []}
+    db_path = db_files[0]
+    date = db_path.stem
+
+    import sqlite3
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        platforms = []
+        for pid, pname in conn.execute(
+            "SELECT id, name FROM platforms WHERE is_active = 1 ORDER BY id"
+        ):
+            items = []
+            for rank, title, url, mobile_url, first_rank, cnt in conn.execute(
+                """
+                SELECT n.rank, n.title, n.url, n.mobile_url,
+                       rh.first_rank, rh.cnt
+                FROM news_items n
+                LEFT JOIN (
+                    SELECT news_item_id,
+                           MAX(CASE WHEN rn_asc = 1 THEN rank END) AS first_rank,
+                           COUNT(*) AS cnt
+                    FROM (
+                        SELECT news_item_id, rank,
+                               ROW_NUMBER() OVER (PARTITION BY news_item_id ORDER BY crawl_time) AS rn_asc
+                        FROM rank_history
+                    )
+                    GROUP BY news_item_id
+                ) rh ON rh.news_item_id = n.id
+                WHERE n.platform_id = ?
+                ORDER BY n.rank
+                """,
+                (pid,),
+            ):
+                trend, delta = "flat", 0
+                if cnt is None or cnt <= 1:
+                    trend = "new"
+                elif first_rank is not None:
+                    delta = int(first_rank) - int(rank)  # 正=排名上升 N 位
+                    trend = "up" if delta > 0 else ("down" if delta < 0 else "flat")
+                items.append({
+                    "rank": rank,
+                    "title": title,
+                    "url": url or "",
+                    "mobile_url": mobile_url or "",
+                    "trend": trend,
+                    "delta": delta,
+                })
+            platforms.append({"id": pid, "name": pname, "items": items})
+        return {"date": date, "platforms": platforms}
+    finally:
+        conn.close()
+
+
+def _upload_report(url: str, token: str) -> None:
+    """上传 HTML 报告到 KV（App 内置浏览器查看）。"""
+    report = Path("output/html/latest/current.html")
+    if not report.exists():
+        print("[静流云同步] 无 HTML 报告，跳过上传")
+        return
+    payload = report.read_bytes()
+    _request("PUT", f"{url}/internal/report.html", token, data=payload, content_type="text/html")
+    print(f"[静流云同步] report.html 已上传（{len(payload)} 字节）")
 
 
 def sync_out() -> None:
@@ -142,7 +217,9 @@ def sync_out() -> None:
     feed = _build_feed()
     payload = json.dumps(feed, ensure_ascii=False).encode("utf-8")
     _request("PUT", f"{url}/internal/feed.json", token, data=payload, content_type="application/json")
-    print(f"[静流云同步] feed.json 已上传（{len(payload)} 字节，{len(feed['contracts'])} 条契约）")
+    hotlist_count = sum(len(p["items"]) for p in feed.get("hotlist", {}).get("platforms", []))
+    print(f"[静流云同步] feed.json 已上传（{len(payload)} 字节，{len(feed['contracts'])} 条契约，{hotlist_count} 条热榜）")
+    _upload_report(url, token)
 
 
 def main() -> None:

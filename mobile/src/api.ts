@@ -129,6 +129,26 @@ export function sendFeedback(
   });
 }
 
+/** 今日热榜条目（cloud_sync 导出，Worker 透传） */
+export interface HotlistItem {
+  rank: number;
+  title: string;
+  url: string;
+  mobile_url: string;
+  trend: "up" | "down" | "flat" | "new";
+  delta: number;
+}
+
+export interface HotlistPlatform {
+  id: string;
+  name: string;
+  items: HotlistItem[];
+}
+
+export function fetchHotlist(settings: Settings): Promise<{ date: string; platforms: HotlistPlatform[] }> {
+  return request(settings, "/hotlist");
+}
+
 /** 兴趣文件条目（后端 GET /api/interests 返回结构） */
 export interface InterestFile {
   path: string;

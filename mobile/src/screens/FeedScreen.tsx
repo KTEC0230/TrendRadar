@@ -9,9 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
-  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -20,10 +18,10 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import * as WebBrowser from "expo-web-browser";
 
 import { Confidence, Contract, Settings, fetchRecentContracts as fetchRecent, sendFeedback } from "../api";
 import { colors, confidenceStyles } from "../theme";
+import { openInBrowser } from "../browser";
 
 interface FeedScreenProps {
   settings: Settings;
@@ -48,14 +46,6 @@ function groupBySource(contracts: Contract[]): ContractGroup[] {
     map.get(name)!.push(c);
   }
   return order.map((name) => ({ key: name, platform: name, items: map.get(name)! }));
-}
-
-async function openInBrowser(url: string): Promise<void> {
-  try {
-    await WebBrowser.openBrowserAsync(url, { showTitle: true, enableBarCollapsing: true });
-  } catch {
-    Linking.openURL(url).catch(() => {});
-  }
 }
 
 /** 组内单页：一条契约的完整展示 */
@@ -138,12 +128,13 @@ function SourceGroupCard({
   onFeedback: (c: Contract, f: "useful" | "useless") => void;
   feedbackBusy: number | null;
 }) {
-  const pageWidth = Dimensions.get("window").width - 28;
+  const [pageWidth, setPageWidth] = useState(0);
   const [page, setPage] = useState(0);
   const latest = group.items[0];
   const latestTitle = latest ? latest.payload?.title?.trim() || latest.hit_reason?.text || "" : "";
 
   const onScroll = useCallback((e: { nativeEvent: { contentOffset: { x: number } } }) => {
+    if (!pageWidth) return;
     const idx = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
     setPage(Math.max(0, Math.min(idx, group.items.length - 1)));
   }, [pageWidth, group.items.length]);
@@ -175,25 +166,27 @@ function SourceGroupCard({
       </TouchableOpacity>
 
       {expanded ? (
-        <View>
-          <ScrollView
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={(e) => onScroll(e)}
-            scrollEventThrottle={32}
-          >
-            {group.items.map((item) => (
-              <ContractPage
-                key={item.id}
-                item={item}
-                width={pageWidth}
-                onFeedback={onFeedback}
-                feedbackBusy={feedbackBusy}
-              />
-            ))}
-          </ScrollView>
-          {group.items.length > 1 ? (
+        <View onLayout={(e) => setPageWidth(e.nativeEvent.layout.width)}>
+          {pageWidth > 0 ? (
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScroll={(e) => onScroll(e)}
+              scrollEventThrottle={32}
+            >
+              {group.items.map((item) => (
+                <ContractPage
+                  key={item.id}
+                  item={item}
+                  width={pageWidth}
+                  onFeedback={onFeedback}
+                  feedbackBusy={feedbackBusy}
+                />
+              ))}
+            </ScrollView>
+          ) : null}
+          {group.items.length > 1 && pageWidth > 0 ? (
             <View style={styles.pageIndicator}>
               <TouchableOpacity
                 disabled={page === 0}

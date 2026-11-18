@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { InterestTarget, fetchInterests, saveInterests, Settings } from "../api";
 import { colors } from "../theme";
@@ -105,6 +106,17 @@ export function InterestsScreen({ settings }: InterestsScreenProps) {
       contentContainerStyle={styles.scrollContent}
       keyboardShouldPersistTaps="handled"
     >
+      <View style={styles.syntaxCard}>
+        <View style={styles.syntaxHeader}>
+          <Ionicons name="construct-outline" size={15} color={colors.accentDark} />
+          <Text style={styles.syntaxTitle}>筛选语法（写进「关键词匹配」即生效）</Text>
+        </View>
+        <Text style={styles.syntaxText}>
+          {`+AI  —— 必须同时包含「AI」\n!广告  —— 标题含「广告」就不推\n@10 —— 每平台最多推 10 条\n/regex/ —— 正则匹配\n
+普通词 = 命中任一即推（每行一个词）`}
+        </Text>
+      </View>
+
       {SECTIONS.map((section) => (
         <View key={section.target} style={styles.card}>
           <View style={styles.cardHeader}>
@@ -167,6 +179,15 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 14,
   },
+  syntaxCard: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  syntaxHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  syntaxTitle: { fontSize: 13, fontWeight: "700", color: colors.accentDark },
+  syntaxText: { fontSize: 12, lineHeight: 19, color: colors.text, marginTop: 8 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardTitle: { fontSize: 15, fontWeight: "700", color: colors.text },
   saveBtn: {

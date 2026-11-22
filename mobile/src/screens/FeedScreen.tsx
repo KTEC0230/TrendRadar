@@ -21,7 +21,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { Contract, Settings, fetchRecentContracts as fetchRecent, sendFeedback } from "../api";
 import { colors, confidenceStyles } from "../theme";
-import { openInBrowser } from "../browser";
+import { useOpenArticle } from "../article";
 import { CenterLoading } from "../components/CenterLoading";
 import { GroupCardShell } from "../components/GroupCardShell";
 
@@ -62,6 +62,7 @@ const ContractPage = memo(function ContractPage({
   onFeedback: (c: Contract, f: "useful" | "useless") => void;
   feedbackBusy: number | null;
 }) {
+  const openArticle = useOpenArticle();
   const conf = confidenceStyles[item.confidence] ?? confidenceStyles.low;
   const reason = item.hit_reason?.text ?? "";
   const attribution = item.source_attribution ?? {};
@@ -81,9 +82,12 @@ const ContractPage = memo(function ContractPage({
       <Text style={styles.reason}>{reason}</Text>
       <Text style={styles.interest}>兴趣「{item.interest_id}」</Text>
       {Boolean(attribution.url) ? (
-        <TouchableOpacity style={styles.linkBtn} onPress={() => openInBrowser(attribution.url)}>
-          <Ionicons name="globe-outline" size={15} color={colors.accentDark} />
-          <Text style={styles.linkText}>内置浏览器阅读原文</Text>
+        <TouchableOpacity
+          style={styles.linkBtn}
+          onPress={() => openArticle(attribution.url, title || attribution.platform_name || "文章")}
+        >
+          <Ionicons name="document-text-outline" size={15} color={colors.accentDark} />
+          <Text style={styles.linkText}>阅读原文</Text>
         </TouchableOpacity>
       ) : null}
       <View style={styles.feedbackRow}>

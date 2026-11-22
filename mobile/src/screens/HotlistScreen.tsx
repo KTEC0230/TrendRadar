@@ -3,14 +3,15 @@
  *
  * - 按平台分组卡片（GroupCardShell，默认展开），条目行 = 排名徽章 + 标题 + 趋势标
  * - 前 3 名橙色强调；趋势：🔺上升 🔻下降 🆕新上榜 · 持平灰
- * - 点条目 → 内置浏览器打开（mobile_url 优先）
- * - 页顶「今日 HTML 报告」→ /api/report?token=（Custom Tabs 用 query 鉴权）
- * - v0.4.1：外壳/加载态抽到 components/，平台卡 memo 化
+ * - 点条目 → App 内文章页（mobile_url 优先）
+ * - 「报告」按钮 → 历史报告列表（Modal）→ 点选进文章页阅读
  */
 
 import React, { memo, useCallback, useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
+  Modal,
   RefreshControl,
   StyleSheet,
   Text,
@@ -19,9 +20,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { HotlistPlatform, fetchHotlist, Settings } from "../api";
+import { HotlistPlatform, ReportInfo, fetchHotlist, fetchReports, Settings } from "../api";
 import { colors } from "../theme";
-import { openInBrowser } from "../browser";
+import { useOpenArticle } from "../article";
 import { CenterLoading } from "../components/CenterLoading";
 import { GroupCardShell } from "../components/GroupCardShell";
 
@@ -47,11 +48,10 @@ function RankBadge({ rank }: { rank: number }) {
 
 const PlatformCard = memo(function PlatformCard({
   platform,
-  onOpen,
 }: {
   platform: HotlistPlatform;
-  onOpen: (url: string) => void;
 }) {
+  const openArticle = useOpenArticle();
   const [expanded, setExpanded] = useState(true);
   return (
     <GroupCardShell
@@ -67,7 +67,7 @@ const PlatformCard = memo(function PlatformCard({
           activeOpacity={0.6}
           onPress={() => {
             const url = item.mobile_url || item.url;
-            if (url) onOpen(url);
+            if (url) openArticle(url, item.title);
           }}
         >
           <RankBadge rank={item.rank} />
@@ -87,10 +87,14 @@ const PlatformCard = memo(function PlatformCard({
 });
 
 export function HotlistScreen({ settings }: HotlistScreenProps) {
+  const openArticle = useOpenArticle();
   const [platforms, setPlatforms] = useState<HotlistPlatform[]>([]);
   const [date, setDate] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reportsVisible, setReportsVisible] = useState(false);
+  const [reports, setReports] = useState<ReportInfo[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,16 +114,31 @@ export function HotlistScreen({ settings }: HotlistScreenProps) {
     load();
   }, [load]);
 
-  const onOpen = useCallback((url: string) => openInBrowser(url), []);
+  const openReports = useCallback(async () => {
+    setReportsVisible(true);
+    setReportsLoading(true);
+    try {
+      const data = await fetchReports(settings);
+      setReports(data.reports ?? []);
+    } catch (e) {
+      setReports([]);
+    } finally {
+      setReportsLoading(false);
+    }
+  }, [settings.baseUrl, settings.authToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openReport = useCallback(() => {
-    const base = settings.baseUrl.replace(/\/+$/, "");
-    openInBrowser(`${base}/report?token=${encodeURIComponent(settings.authToken)}`);
-  }, [settings.baseUrl, settings.authToken]);
+  const openReportFile = useCallback(
+    (r: ReportInfo) => {
+      const base = settings.baseUrl.replace(/\/+$/, "");
+      setReportsVisible(false);
+      openArticle(`${base}/report/file/${r.name}?token=${encodeURIComponent(settings.authToken)}`, `${r.date} ${r.time} 报告`);
+    },
+    [settings.baseUrl, settings.authToken, openArticle]
+  );
 
   const renderPlatform = useCallback(
-    ({ item }: { item: HotlistPlatform }) => <PlatformCard platform={item} onOpen={onOpen} />,
-    [onOpen]
+    ({ item }: { item: HotlistPlatform }) => <PlatformCard platform={item} />,
+    []
   );
 
   if (loading && platforms.length === 0) {
@@ -130,9 +149,9 @@ export function HotlistScreen({ settings }: HotlistScreenProps) {
     <View style={styles.flex1}>
       <View style={styles.toolbar}>
         <Text style={styles.dateText}>{date ? `数据日期 ${date}` : ""}</Text>
-        <TouchableOpacity style={styles.reportBtn} onPress={openReport}>
+        <TouchableOpacity style={styles.reportBtn} onPress={openReports}>
           <Ionicons name="document-text-outline" size={14} color={colors.accentDark} />
-          <Text style={styles.reportBtnText}>今日 HTML 报告</Text>
+          <Text style={styles.reportBtnText}>报告</Text>
         </TouchableOpacity>
       </View>
       <FlatList
@@ -151,6 +170,38 @@ export function HotlistScreen({ settings }: HotlistScreenProps) {
           <RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.accent} colors={[colors.accent]} />
         }
       />
+
+      {/* 历史报告列表 */}
+      <Modal visible={reportsVisible} transparent animationType="slide" onRequestClose={() => setReportsVisible(false)}>
+        <View style={styles.modalMask}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>历史报告</Text>
+              <TouchableOpacity onPress={() => setReportsVisible(false)} hitSlop={{ top: 10, right: 10, bottom: 10 }}>
+                <Ionicons name="close" size={22} color={colors.secondary} />
+              </TouchableOpacity>
+            </View>
+            {reportsLoading ? (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator color={colors.accent} />
+              </View>
+            ) : (
+              <FlatList
+                data={reports}
+                keyExtractor={(r) => r.name}
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={styles.reportRow} onPress={() => openReportFile(item)}>
+                    <Ionicons name="document-text-outline" size={17} color={colors.accentDark} />
+                    <Text style={styles.reportRowText}>{item.date} {item.time}</Text>
+                    <Text style={styles.reportRowSize}>{Math.round(item.size / 1024)} KB</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={<Text style={styles.emptySmall}>云端还没有历史报告——每轮管道运行后自动积累</Text>}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -194,4 +245,30 @@ const styles = StyleSheet.create({
   rowTitle: { flex: 1, fontSize: 14, color: colors.text, lineHeight: 19, marginHorizontal: 10 },
   trend: { fontSize: 12, fontWeight: "600", minWidth: 34, textAlign: "right" },
   empty: { textAlign: "center", marginTop: 60, color: colors.faint, paddingHorizontal: 20, lineHeight: 22 },
+  modalMask: { flex: 1, backgroundColor: "rgba(31,30,29,0.45)", justifyContent: "flex-end" },
+  modalCard: {
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "70%",
+    padding: 18,
+  },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  modalTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
+  modalLoading: { paddingVertical: 40, alignItems: "center" },
+  reportRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  reportRowText: { flex: 1, fontSize: 14, color: colors.text, fontWeight: "500" },
+  reportRowSize: { fontSize: 12, color: colors.faint },
+  emptySmall: { fontSize: 12, color: colors.faint, textAlign: "center", paddingVertical: 24 },
 });

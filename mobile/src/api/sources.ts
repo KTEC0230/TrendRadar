@@ -35,3 +35,36 @@ export function saveSourcesConfig(settings: Settings, overlay: SourceOverlay): P
     body: JSON.stringify(overlay),
   });
 }
+
+/** 网页监控源（overlay = App 端期望清单；catalog = state.db 实况） */
+export interface WebpageSourceEntry {
+  uid: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  check_interval: number;
+}
+
+export interface WebpageSourceCatalogItem {
+  id: number;
+  name: string;
+  url: string;
+  status: string;
+  check_interval: number;
+}
+
+export function fetchWebpageSources(
+  settings: Settings
+): Promise<{ catalog: WebpageSourceCatalogItem[]; overlay: { webpage_sources: WebpageSourceEntry[] } }> {
+  return request(settings, "/webpage-sources");
+}
+
+export function saveWebpageSources(
+  settings: Settings,
+  webpageSources: WebpageSourceEntry[]
+): Promise<{ updated: boolean }> {
+  return request(settings, "/webpage-sources", {
+    method: "PUT",
+    body: JSON.stringify({ webpage_sources: webpageSources }),
+  });
+}

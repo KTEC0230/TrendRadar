@@ -23,3 +23,15 @@ export interface HotlistPlatform {
 export function fetchHotlist(settings: Settings): Promise<{ date: string; platforms: HotlistPlatform[] }> {
   return request(settings, "/hotlist");
 }
+
+/** 历史报告索引（cloud_sync 导出，Worker 透传） */
+export interface ReportInfo {
+  name: string;
+  date: string;
+  time: string;
+  size: number;
+}
+
+export function fetchReports(settings: Settings): Promise<{ reports: ReportInfo[] }> {
+  return request(settings, "/reports");
+}

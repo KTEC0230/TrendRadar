@@ -113,6 +113,9 @@ def sync_in() -> None:
         overlay_path.unlink()
         print("[静流云同步] 云端无信息源 overlay，已移除本地文件")
 
+    # 4) 网页监控 overlay（App 端期望清单 → upsert 进 state.db sources 表）
+    _apply_webpage_sources(url, token)
+
 
 def _build_feed() -> dict:
     """复用本地 API 同一序列化路径，保证 feed.json 与 /api/contracts/recent 结构一致。"""
@@ -126,6 +129,16 @@ def _build_feed() -> dict:
     backend = LocalStorageBackend(data_dir=data_dir, enable_txt=False, enable_html=False, timezone=timezone)
     try:
         contracts = backend.get_recent_contracts(FEED_CONTRACT_LIMIT)
+        webpage_sources = [
+            {
+                "id": s.get("id"),
+                "name": s.get("name"),
+                "url": (s.get("config") or {}).get("url", ""),
+                "status": s.get("status"),
+                "check_interval": s.get("check_interval"),
+            }
+            for s in backend.list_sources("webpage")
+        ]
     finally:
         backend.cleanup()
 
@@ -138,7 +151,91 @@ def _build_feed() -> dict:
         "interests": interests,
         "hotlist": _build_hotlist(data_dir),
         "sources_catalog": _build_sources_catalog(),
+        "webpage_sources": webpage_sources,
     }
+
+
+def _apply_webpage_sources(url: str, token: str) -> None:
+    """把 App 端网页监控 overlay 应用进 state.db sources 表（按 config.url 匹配 upsert）。
+
+    App 管理的源带 selector_config.app_managed 标记：overlay 中删除的条目会连源删除；
+    命令行/本地 API 建的源不带标记，不受影响。
+    """
+    raw = _request("GET", f"{url}/internal/webpage-sources", token)
+    overlay_path = Path("output/state/webpage_sources.json")
+    if raw:
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_path.write_bytes(raw)
+    elif overlay_path.exists():
+        overlay_path.unlink()
+    if not raw:
+        print("[静流云同步] 云端无网页监控 overlay，跳过应用")
+        return
+
+    try:
+        entries = json.loads(raw)
+        assert isinstance(entries, list)
+    except Exception as e:
+        print(f"[静流云同步] 网页监控 overlay 解析失败，忽略: {e}")
+        return
+
+    try:
+        config = load_config()
+        data_dir = config.get("STORAGE", {}).get("LOCAL", {}).get("DATA_DIR", "output")
+    except Exception:
+        data_dir = "output"
+
+    backend = LocalStorageBackend(data_dir=data_dir, enable_txt=False, enable_html=False)
+    try:
+        existing = {}
+        for s in backend.list_sources("webpage"):
+            u = (s.get("config") or {}).get("url", "")
+            if u:
+                existing[u] = s
+        overlay_urls = set()
+        added = updated = 0
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            name = (e.get("name") or "网页监控").strip()[:100]
+            u = (e.get("url") or "").strip()
+            if not u.startswith(("http://", "https://")):
+                continue
+            overlay_urls.add(u)
+            status = "active" if e.get("enabled", True) else "inactive"
+            try:
+                interval = max(30, int(e.get("check_interval") or 30))
+            except (ValueError, TypeError):
+                interval = 30
+            s = existing.get(u)
+            if s is None:
+                backend.register_source({
+                    "type": "webpage",
+                    "platform": "webpage",
+                    "external_id": u,
+                    "name": name,
+                    "config": {"url": u},
+                    "check_interval": interval,
+                    "selector_config": {"app_managed": True},
+                    "status": status,
+                })
+                added += 1
+            else:
+                backend.update_source(s["id"], {
+                    "name": name,
+                    "status": status,
+                    "check_interval": interval,
+                    "selector_config": {**(s.get("selector_config") or {}), "app_managed": True},
+                })
+                updated += 1
+        removed = 0
+        for u, s in existing.items():
+            if (s.get("selector_config") or {}).get("app_managed") and u not in overlay_urls:
+                backend.delete_source(s["id"])
+                removed += 1
+        print(f"[静流云同步] 网页监控 overlay 应用：新增 {added}、更新 {updated}、删除 {removed}")
+    finally:
+        backend.cleanup()
 
 
 def _build_sources_catalog() -> dict:
@@ -250,7 +347,10 @@ def _build_hotlist(data_dir: str) -> dict:
 
 
 def _upload_report(url: str, token: str) -> None:
-    """上传 HTML 报告到 KV（App 内置浏览器查看）。"""
+    """上传 HTML 报告到 KV：current.html（今日）+ 最近 10 份历史报告 + 索引。
+
+    本地 output/state/reports_uploaded.json 记账防重传（按 output 相对路径）。
+    """
     report = Path("output/html/latest/current.html")
     if not report.exists():
         print("[静流云同步] 无 HTML 报告，跳过上传")
@@ -258,6 +358,38 @@ def _upload_report(url: str, token: str) -> None:
     payload = report.read_bytes()
     _request("PUT", f"{url}/internal/report.html", token, data=payload, content_type="text/html")
     print(f"[静流云同步] report.html 已上传（{len(payload)} 字节）")
+
+    # 历史报告：最近 10 份（按修改时间），跳过已上传的
+    html_dir = Path("output/html")
+    ledger_path = Path("output/state/reports_uploaded.json")
+    try:
+        done = set(json.loads(ledger_path.read_text(encoding="utf-8"))) if ledger_path.exists() else set()
+    except Exception:
+        done = set()
+    candidates = []
+    for f in html_dir.rglob("*.html"):
+        if f.name == "current.html":
+            continue
+        candidates.append(f)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    index = []
+    uploaded_now = 0
+    for f in candidates[:10]:
+        rel_name = f"{f.parent.name}-{f.stem}.html"
+        entry = {"name": rel_name, "date": f.parent.name, "time": f.stem, "size": f.stat().st_size}
+        index.append(entry)
+        if rel_name in done:
+            continue
+        blob = f.read_bytes()
+        _request("PUT", f"{url}/internal/report/{rel_name}", token, data=blob, content_type="text/html")
+        done.add(rel_name)
+        uploaded_now += 1
+    _request("PUT", f"{url}/internal/report-index", token,
+             data=json.dumps({"reports": index}, ensure_ascii=False).encode("utf-8"),
+             content_type="application/json")
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text(json.dumps(sorted(done), ensure_ascii=False), encoding="utf-8")
+    print(f"[静流云同步] 历史报告索引已上传（{len(index)} 份，本次新传 {uploaded_now}）")
 
 
 def sync_out() -> None:

@@ -19,6 +19,8 @@ const KEY_STATE_DB = "state.db";
 const KEY_FEED = "feed.json";
 const KEY_FEEDBACK = "feedback";
 const KEY_SOURCES_CONFIG = "sources_config.json";
+const KEY_WEBPAGE_SOURCES = "webpage_sources.json";
+const KEY_REPORT_INDEX = "report_index.json";
 const KEY_INTERESTS = (t) => `interests:${t}`;
 
 const INTEREST_TARGETS = ["ai_interests", "frequency_words"];
@@ -96,6 +98,29 @@ async function handleAppApi(request, url, env) {
     });
   }
 
+  // 历史报告列表（Bearer）
+  if (method === "GET" && path === "/api/reports") {
+    if (!checkAuth(request, token)) return unauthorized();
+    const raw = await env.KV.get(KEY_REPORT_INDEX);
+    let reports = [];
+    if (raw) {
+      try {
+        reports = JSON.parse(raw).reports || [];
+      } catch {}
+    }
+    return json({ reports });
+  }
+
+  // 单份历史报告（query token；WebView/内置浏览器直接加载）
+  const reportFileMatch = path.match(/^\/api\/report\/file\/([\w.-]+\.html)$/);
+  if (method === "GET" && reportFileMatch) {
+    const qtoken = url.searchParams.get("token") || "";
+    if (!safeEqual(qtoken, token)) return unauthorized();
+    const html = await env.KV.get(`report/${reportFileMatch[1]}`);
+    if (!html) return json({ error: "报告不存在" }, 404);
+    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+
   // ---- 信息源管理（App 源管理屏；overlay 单一真源，下一轮管道生效） ----
   if (method === "GET" && path === "/api/sources-config") {
     const feedRaw = await env.KV.get(KEY_FEED);
@@ -140,6 +165,37 @@ async function handleAppApi(request, url, env) {
     const feedRaw = await env.KV.get(KEY_FEED);
     const feed = feedRaw ? JSON.parse(feedRaw) : {};
     return json(feed.hotlist || { date: "", platforms: [] });
+  }
+
+  // ---- 网页监控源管理（overlay 单一真源；catalog = state.db 实况） ----
+  if (method === "GET" && path === "/api/webpage-sources") {
+    const feedRaw = await env.KV.get(KEY_FEED);
+    const feed = feedRaw ? JSON.parse(feedRaw) : {};
+    const overlayRaw = await env.KV.get(KEY_WEBPAGE_SOURCES);
+    let overlay = { webpage_sources: [] };
+    if (overlayRaw) {
+      try {
+        const parsed = JSON.parse(overlayRaw);
+        if (Array.isArray(parsed)) overlay = { webpage_sources: parsed };
+      } catch {}
+    }
+    return json({ catalog: feed.webpage_sources || [], overlay });
+  }
+  if (method === "PUT" && path === "/api/webpage-sources") {
+    const body = await readJson(request, 256 * 1024);
+    const list = Array.isArray(body?.webpage_sources) ? body.webpage_sources : null;
+    if (!list) return json({ error: "webpage_sources 必须为数组" }, 400);
+    const clean = list
+      .filter((e) => e && typeof e === "object" && typeof e.url === "string" && /^https?:\/\//.test(e.url.trim()))
+      .map((e, i) => ({
+        uid: String(e.uid || `wp-${i}-${Date.now()}`),
+        name: String(e.name || "").trim().slice(0, 100) || "网页监控",
+        url: String(e.url).trim(),
+        enabled: e.enabled !== false,
+        check_interval: Math.max(30, parseInt(e.check_interval, 10) || 30),
+      }));
+    await env.KV.put(KEY_WEBPAGE_SOURCES, JSON.stringify(clean));
+    return json({ updated: true, count: clean.length });
   }
 
   // ---- 推送流 ----
@@ -273,6 +329,30 @@ async function handleInternalApi(request, url, env) {
     const overlay = await env.KV.get(KEY_SOURCES_CONFIG);
     if (!overlay) return json({ error: "无信息源 overlay" }, 404);
     return new Response(overlay, { headers: JSON_HEADERS });
+  }
+
+  // ---- 网页监控 overlay（sync-in 拉取用；无 → 404，管道跳过应用） ----
+  if (method === "GET" && path === "/internal/webpage-sources") {
+    const overlay = await env.KV.get(KEY_WEBPAGE_SOURCES);
+    if (!overlay) return json({ error: "无网页监控 overlay" }, 404);
+    return new Response(overlay, { headers: JSON_HEADERS });
+  }
+
+  // ---- 历史报告上传（sync-out：单份文件 + 索引） ----
+  const reportPutMatch = path.match(/^\/internal\/report\/([\w.-]+\.html)$/);
+  if (method === "PUT" && reportPutMatch) {
+    const body = await request.text();
+    if (new TextEncoder().encode(body).length > KV_VALUE_LIMIT) {
+      return json({ error: "报告超过 KV 单值上限" }, 413);
+    }
+    await env.KV.put(`report/${reportPutMatch[1]}`, body);
+    return json({ ok: true });
+  }
+  if (method === "PUT" && path === "/internal/report-index") {
+    const body = await readJson(request, 1024 * 1024);
+    if (!body || !Array.isArray(body.reports)) return json({ error: "reports 必须为数组" }, 400);
+    await env.KV.put(KEY_REPORT_INDEX, JSON.stringify({ reports: body.reports.slice(0, 20) }));
+    return json({ ok: true, count: Math.min(body.reports.length, 20) });
   }
 
   // ---- 兴趣 overlay（sync-in 拉取用；无 overlay 时返回 null 让管道用仓库配置） ----

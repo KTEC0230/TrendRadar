@@ -19,9 +19,9 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { ArticleContext, ArticleScreen, ArticleTarget } from "./src/article";
 import { Settings } from "./src/api";
 import { loadSettings, saveSettings } from "./src/settings";
 import { checkForNewContracts } from "./src/notifications";
@@ -57,13 +57,23 @@ function Shell() {
   const [tab, setTab] = useState<Tab>("feed");
   const [refreshToken, setRefreshToken] = useState(0);
   const [batteryPrompt, setBatteryPrompt] = useState(false);
+  const [article, setArticle] = useState<ArticleTarget | null>(null);
   const settingsRef = useRef(settings);
   const tabRef = useRef<Tab>("feed");
+  const articleRef = useRef<ArticleTarget | null>(null);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
     tabRef.current = tab;
   }, [tab]);
+
+  useEffect(() => {
+    articleRef.current = article;
+  }, [article]);
+
+  const openArticle = useCallback((url: string, title?: string) => {
+    setArticle({ url, title: title || "文章" });
+  }, []);
 
   useEffect(() => {
     loadSettings().then((loaded) => {
@@ -93,20 +103,17 @@ function Shell() {
     };
 
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        pull();
-        // Custom Tabs 预热：点原文秒开
-        WebBrowser.warmUpAsync().catch(() => {});
-      } else {
-        WebBrowser.coolDownAsync().catch(() => {});
-      }
+      if (state === "active") pull();
     });
     pull();
-    WebBrowser.warmUpAsync().catch(() => {});
     const timer = setInterval(pull, FOREGROUND_POLL_MS);
 
-    // 安卓返回键：非推送流 Tab 先回推送流，推送流再按才退出
+    // 安卓返回键：文章页先关文章 → 非推送流 Tab 回推送流 → 推送流再按才退出
     const backSubscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (articleRef.current) {
+        setArticle(null);
+        return true;
+      }
       if (tabRef.current !== "feed") {
         setTab("feed");
         return true;
@@ -152,17 +159,19 @@ function Shell() {
       </View>
 
       <View style={styles.body}>
-        {tab === "feed" ? (
-          <FeedScreen settings={settings} refreshToken={refreshToken} />
-        ) : tab === "hotlist" ? (
-          <HotlistScreen settings={settings} />
-        ) : tab === "sources" ? (
-          <SourcesScreen settings={settings} />
-        ) : tab === "interests" ? (
-          <InterestsScreen settings={settings} />
-        ) : (
-          <SettingsScreen settings={settings} onChange={handleSettingsChange} onRefresh={handleRefresh} />
-        )}
+        <ArticleContext.Provider value={openArticle}>
+          {tab === "feed" ? (
+            <FeedScreen settings={settings} refreshToken={refreshToken} />
+          ) : tab === "hotlist" ? (
+            <HotlistScreen settings={settings} />
+          ) : tab === "sources" ? (
+            <SourcesScreen settings={settings} />
+          ) : tab === "interests" ? (
+            <InterestsScreen settings={settings} />
+          ) : (
+            <SettingsScreen settings={settings} onChange={handleSettingsChange} onRefresh={handleRefresh} />
+          )}
+        </ArticleContext.Provider>
       </View>
 
       {/* 底部 Tab：insets.bottom 保证不被手势条/返回键区域遮挡 */}
@@ -204,6 +213,11 @@ function Shell() {
           </View>
         </View>
       </Modal>
+
+      {/* App 内文章页：全屏覆盖（含 Tab 栏），返回键/左上角关闭 */}
+      {article ? (
+        <ArticleScreen target={article} onClose={() => setArticle(null)} />
+      ) : null}
     </View>
   );
 }

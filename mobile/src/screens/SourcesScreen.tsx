@@ -23,8 +23,11 @@ import {
   SourceCatalogFeed,
   SourceCatalogPlatform,
   SourceOverlay,
+  WebpageSourceEntry,
   fetchSourcesConfig,
+  fetchWebpageSources,
   saveSourcesConfig,
+  saveWebpageSources,
   Settings,
 } from "../api";
 import { colors } from "../theme";
@@ -41,6 +44,10 @@ export function SourcesScreen({ settings }: SourcesScreenProps) {
   const [disabledPlatforms, setDisabledPlatforms] = useState<Set<string>>(new Set());
   const [disabledFeeds, setDisabledFeeds] = useState<Set<string>>(new Set());
   const [extraFeeds, setExtraFeeds] = useState<{ id: string; name: string; url: string }[]>([]);
+  const [webpageEntries, setWebpageEntries] = useState<WebpageSourceEntry[]>([]);
+  const [webpageBusy, setWebpageBusy] = useState(false);
+  const [wpName, setWpName] = useState("");
+  const [wpUrl, setWpUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ kind: "idle" | "ok" | "error"; message: string }>({
@@ -67,6 +74,20 @@ export function SourcesScreen({ settings }: SourcesScreenProps) {
       setLoading(false);
     }
   }, [settings.baseUrl, settings.authToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 网页监控独立加载（保存后即时刷新实况）
+  const loadWebpage = useCallback(async () => {
+    try {
+      const data = await fetchWebpageSources(settings);
+      setWebpageEntries(data.overlay?.webpage_sources ?? []);
+    } catch {
+      setWebpageEntries([]);
+    }
+  }, [settings.baseUrl, settings.authToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    loadWebpage();
+  }, [loadWebpage]);
 
   useEffect(() => {
     load();
@@ -124,6 +145,70 @@ export function SourcesScreen({ settings }: SourcesScreenProps) {
       setStatus({ kind: "error", message: (e as Error).message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const addWebpage = async () => {
+    const url = wpUrl.trim();
+    if (!url) return;
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      setStatus({ kind: "error", message: "网址需以 http:// 或 https:// 开头" });
+      return;
+    }
+    if (webpageEntries.some((e) => e.url === url)) {
+      setStatus({ kind: "error", message: "该网址已在监控列表里" });
+      return;
+    }
+    const next = [
+      ...webpageEntries,
+      {
+        uid: `wp-${Date.now()}`,
+        name: wpName.trim() || "网页监控",
+        url,
+        enabled: true,
+        check_interval: 30,
+      },
+    ];
+    setWebpageEntries(next);
+    setWpName("");
+    setWpUrl("");
+    setWebpageBusy(true);
+    try {
+      await saveWebpageSources(settings, next);
+      setStatus({ kind: "ok", message: "网页监控已保存——下一轮管道运行时开始盯它" });
+      loadWebpage();
+    } catch (e) {
+      setStatus({ kind: "error", message: (e as Error).message });
+    } finally {
+      setWebpageBusy(false);
+    }
+  };
+
+  const toggleWebpage = async (uid: string) => {
+    const next = webpageEntries.map((e) => (e.uid === uid ? { ...e, enabled: !e.enabled } : e));
+    setWebpageEntries(next);
+    setWebpageBusy(true);
+    try {
+      await saveWebpageSources(settings, next);
+      setStatus({ kind: "ok", message: "已保存——下一轮管道运行时生效" });
+    } catch (e) {
+      setStatus({ kind: "error", message: (e as Error).message });
+    } finally {
+      setWebpageBusy(false);
+    }
+  };
+
+  const deleteWebpage = async (uid: string) => {
+    const next = webpageEntries.filter((e) => e.uid !== uid);
+    setWebpageEntries(next);
+    setWebpageBusy(true);
+    try {
+      await saveWebpageSources(settings, next);
+      setStatus({ kind: "ok", message: "已删除——下一轮管道运行时移除监控" });
+    } catch (e) {
+      setStatus({ kind: "error", message: (e as Error).message });
+    } finally {
+      setWebpageBusy(false);
     }
   };
 
@@ -214,6 +299,63 @@ export function SourcesScreen({ settings }: SourcesScreenProps) {
                 {enabledCount(feeds.length + extraFeeds.length, disabledFeeds.size)} · 自定义 {extraFeeds.length} 个
               </Text>
             ) : null}
+          </View>
+
+          <Text style={styles.sectionTitle}>网页监控</Text>
+          <View style={styles.card}>
+            <Text style={styles.webpageIntro}>
+              盯住任意网页的内容变化（如博客更新页、公告栏），变化即推送。每 30 分钟检查一次。
+            </Text>
+            {webpageEntries.map((e) => (
+              <ToggleRow
+                key={e.uid}
+                title={e.name}
+                subtitle={e.url}
+                value={e.enabled}
+                onChange={() => toggleWebpage(e.uid)}
+                right={
+                  <TouchableOpacity
+                    onPress={() => deleteWebpage(e.uid)}
+                    disabled={webpageBusy}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="trash-outline" size={17} color={colors.danger} />
+                  </TouchableOpacity>
+                }
+              />
+            ))}
+            {webpageEntries.length === 0 ? (
+              <Text style={styles.emptyLine}>还没有监控的网页——添加一个试试</Text>
+            ) : null}
+            <View style={styles.addForm}>
+              <TextInput
+                style={styles.input}
+                value={wpName}
+                onChangeText={setWpName}
+                placeholder="名称（可选，如：我的博客）"
+                placeholderTextColor={colors.faint}
+              />
+              <TextInput
+                style={styles.input}
+                value={wpUrl}
+                onChangeText={setWpUrl}
+                placeholder="网页地址，如 https://example.com/posts"
+                placeholderTextColor={colors.faint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+              <TouchableOpacity style={styles.addBtn} disabled={webpageBusy} onPress={addWebpage}>
+                {webpageBusy ? (
+                  <ActivityIndicator size="small" color={colors.accentDark} />
+                ) : (
+                  <>
+                    <Ionicons name="add" size={16} color={colors.accentDark} />
+                    <Text style={styles.addBtnText}>添加监控</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       }
@@ -306,6 +448,7 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: colors.accentDark, fontSize: 14, fontWeight: "600" },
   countHint: { fontSize: 11, color: colors.faint, marginTop: 8 },
+  webpageIntro: { fontSize: 12, lineHeight: 18, color: colors.secondary, marginBottom: 8 },
   saveBtn: {
     backgroundColor: colors.accent,
     borderRadius: 14,
